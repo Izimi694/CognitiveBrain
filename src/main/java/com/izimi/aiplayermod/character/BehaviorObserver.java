@@ -2,17 +2,24 @@ package com.izimi.aiplayermod.character;
 
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.config.ModConfig;
+import com.izimi.aiplayermod.learning.BehaviorEvent;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
-import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.world.World;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
+import net.minecraft.util.TypedActionResult;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 public class BehaviorObserver {
     private final CharacterManager characterManager;
@@ -27,22 +34,69 @@ public class BehaviorObserver {
     private int observationCount = 0;
     private static final int EVOLVE_THRESHOLD = 10;
 
+    private final List<Consumer<BehaviorEvent>> learningListeners = new ArrayList<>();
+
     public BehaviorObserver(CharacterManager characterManager, ModConfig config, PersonalityStress personalityStress) {
         this.characterManager = characterManager;
         this.config = config;
         this.personalityStress = personalityStress;
     }
 
+    public void addLearningListener(Consumer<BehaviorEvent> listener) {
+        learningListeners.add(listener);
+    }
+
     public void register() {
         PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, blockEntity) -> {
-            if (player instanceof ServerPlayerEntity) {
-                onBlockBreak(state);
+            if (player instanceof ServerPlayerEntity sp) {
+                String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
+                onBlockBreak(blockId, state);
+
+                String heldItem = getHeldItemName(sp);
+                String timeOfDay = getTimeOfDay(world);
+                notifyLearning(new BehaviorEvent(sp.getName().getString(), "dig",
+                        blockId, System.currentTimeMillis(), heldItem, timeOfDay));
             }
         });
 
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
-            if (player instanceof ServerPlayerEntity && entity instanceof LivingEntity) {
-                onEntityAttack((LivingEntity) entity);
+            if (player instanceof ServerPlayerEntity sp && entity instanceof LivingEntity le) {
+                String entityType = le.getType().getName().getString();
+                onEntityAttack(entityType);
+
+                String heldItem = getHeldItemName(sp);
+                String timeOfDay = getTimeOfDay(world);
+                notifyLearning(new BehaviorEvent(sp.getName().getString(), "attack",
+                        entityType, System.currentTimeMillis(), heldItem, timeOfDay));
+            }
+            return ActionResult.PASS;
+        });
+
+        UseItemCallback.EVENT.register((player, world, hand) -> {
+            if (player instanceof ServerPlayerEntity sp) {
+                ItemStack stack = sp.getStackInHand(hand);
+                String itemId = Registries.ITEM.getId(stack.getItem()).toString();
+                onItemUse(itemId);
+
+                String timeOfDay = getTimeOfDay(world);
+                notifyLearning(new BehaviorEvent(sp.getName().getString(), "use_item",
+                        itemId, System.currentTimeMillis(), itemId, timeOfDay));
+            }
+            return TypedActionResult.pass(player.getStackInHand(hand));
+        });
+
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            if (player instanceof ServerPlayerEntity sp) {
+                var pos = hitResult.getBlockPos();
+                BlockState state = world.getBlockState(pos);
+                String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
+                onBlockPlace(blockId);
+
+                ItemStack stack = sp.getStackInHand(hand);
+                String heldItem = Registries.ITEM.getId(stack.getItem()).toString();
+                String timeOfDay = getTimeOfDay(world);
+                notifyLearning(new BehaviorEvent(sp.getName().getString(), "place_block",
+                        blockId, System.currentTimeMillis(), heldItem, timeOfDay));
             }
             return ActionResult.PASS;
         });
@@ -51,11 +105,16 @@ public class BehaviorObserver {
             onChatMessage(message.getSignedContent());
         });
 
-        AIPlayerMod.LOGGER.info("[BehaviorObserver] 行为观察器已注册");
+        AIPlayerMod.LOGGER.info("[BehaviorObserver] 行为观察器已注册 (blockBreak + attack + useItem + placeBlock + chat)");
     }
 
-    private void onBlockBreak(BlockState state) {
-        String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
+    private void notifyLearning(BehaviorEvent event) {
+        for (Consumer<BehaviorEvent> listener : learningListeners) {
+            listener.accept(event);
+        }
+    }
+
+    private void onBlockBreak(String blockId, BlockState state) {
         blockBreakCounts.merge(blockId, 1, Integer::sum);
         pendingBehaviorUpdates.merge(blockId, 0.05, Double::sum);
         observationCount++;
@@ -63,12 +122,25 @@ public class BehaviorObserver {
         checkEvolution();
     }
 
-    private void onEntityAttack(LivingEntity entity) {
-        String entityType = entity.getType().getName().getString();
+    private void onEntityAttack(String entityType) {
         entityAttackCounts.merge(entityType, 1, Integer::sum);
         pendingBehaviorUpdates.merge(entityType, -0.03, Double::sum);
         observationCount++;
         if (personalityStress != null) personalityStress.onPlayerInteraction(0.3);
+        checkEvolution();
+    }
+
+    private void onItemUse(String itemId) {
+        pendingBehaviorUpdates.merge(itemId, 0.03, Double::sum);
+        observationCount++;
+        if (personalityStress != null) personalityStress.onPlayerInteraction(0.1);
+        checkEvolution();
+    }
+
+    private void onBlockPlace(String blockId) {
+        pendingBehaviorUpdates.merge(blockId, 0.04, Double::sum);
+        observationCount++;
+        if (personalityStress != null) personalityStress.onPlayerInteraction(0.15);
         checkEvolution();
     }
 
@@ -155,5 +227,19 @@ public class BehaviorObserver {
                     .forEach(e -> sb.append("  ").append(e.getKey()).append(": ").append(e.getValue()).append("次\n"));
         }
         return sb.toString();
+    }
+
+    private String getHeldItemName(ServerPlayerEntity player) {
+        ItemStack stack = player.getMainHandStack();
+        if (stack.isEmpty()) return "empty";
+        return Registries.ITEM.getId(stack.getItem()).toString();
+    }
+
+    private String getTimeOfDay(World world) {
+        long time = world.getTimeOfDay() % 24000;
+        if (time < 6000) return "morning";
+        if (time < 12000) return "noon";
+        if (time < 18000) return "evening";
+        return "night";
     }
 }

@@ -52,6 +52,22 @@ public class FileUtil {
         return getAIMemoryDir().resolve("execution_logs");
     }
 
+    public static Path getTrialsDir() {
+        return getMemoriesDir().resolve("trials");
+    }
+
+    public static Path getEvaluationsDir() {
+        return getAIMemoryDir().resolve("evaluations");
+    }
+
+    public static Path getConditionedDir() {
+        return getAIMemoryDir().resolve("conditioned");
+    }
+
+    public static Path getThresholdsDir() {
+        return getCharacterDir().resolve("thresholds");
+    }
+
     public static Path getConfigDir() {
         return getAIMemoryDir().resolve("config");
     }
@@ -98,6 +114,10 @@ public class FileUtil {
         Files.createDirectories(getStateDir());
         Files.createDirectories(getExecutionLogsDir());
         Files.createDirectories(getConfigDir());
+        Files.createDirectories(getTrialsDir());
+        Files.createDirectories(getEvaluationsDir());
+        Files.createDirectories(getConditionedDir());
+        Files.createDirectories(getThresholdsDir());
     }
 
     public static boolean deleteIfExists(Path path) {

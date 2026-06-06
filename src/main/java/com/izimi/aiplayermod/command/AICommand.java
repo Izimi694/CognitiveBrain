@@ -1,6 +1,7 @@
 package com.izimi.aiplayermod.command;
 
 import com.izimi.aiplayermod.AIPlayerMod;
+import com.izimi.aiplayermod.autonomy.IdleBrain;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.server.command.ServerCommandSource;
@@ -25,6 +26,7 @@ public class AICommand {
                 .then(literal("spawn").executes(ctx -> spawnBot(ctx.getSource())))
                 .then(literal("despawn").executes(ctx -> despawnBot(ctx.getSource())))
                 .then(literal("personality").executes(ctx -> showPersonality(ctx.getSource())))
+                .then(literal("suggestions").executes(ctx -> triggerSuggestions(ctx.getSource())))
                 .then(literal("forget")
                         .then(argument("id", StringArgumentType.string()).executes(ctx -> {
                             String id = StringArgumentType.getString(ctx, "id");
@@ -56,6 +58,7 @@ public class AICommand {
         source.sendFeedback(() -> Text.literal("§e/ai spawn §7- 生成AI玩家"), false);
         source.sendFeedback(() -> Text.literal("§e/ai despawn §7- 移除AI玩家"), false);
         source.sendFeedback(() -> Text.literal("§e/ai personality §7- 查看AI个性偏好"), false);
+        source.sendFeedback(() -> Text.literal("§e/ai suggestions §7- 触发IdleBrain主动建议"), false);
         source.sendFeedback(() -> Text.literal("§e/ai forget <id> §7- 删除指定记忆"), false);
         source.sendFeedback(() -> Text.literal("§e/ai setkey <key> §7- 设置AI API密钥"), false);
         source.sendFeedback(() -> Text.literal("§e/ai apikey §7- 查看API密钥状态"), false);
@@ -263,6 +266,34 @@ public class AICommand {
             }
         } catch (Exception e) {
             source.sendFeedback(() -> Text.literal("§c[AI Player] 查询失败: " + e.getMessage()), false);
+        }
+        return 1;
+    }
+
+    private static int triggerSuggestions(ServerCommandSource source) {
+        try {
+            var idleBrain = AIPlayerMod.getIdleBrain();
+            if (idleBrain == null) {
+                source.sendFeedback(() -> Text.literal("§7[AI Player] IdleBrain系统未初始化"), false);
+                return 0;
+            }
+            var botSpawner = AIPlayerMod.getBotSpawner();
+            if (botSpawner == null || !botSpawner.isSpawned()) {
+                source.sendFeedback(() -> Text.literal("§7[AI Player] Bot未生成，请先用 /ai spawn"), false);
+                return 0;
+            }
+            IdleBrain.SuggestionTemplate suggestion = idleBrain.forceSuggest();
+            if (suggestion != null) {
+                var bot = botSpawner.getBotEntity();
+                if (bot != null) {
+                    bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + suggestion.text()));
+                }
+                source.sendFeedback(() -> Text.literal("§a[AI Player] 建议已发送: " + suggestion.text()), false);
+            } else {
+                source.sendFeedback(() -> Text.literal("§7[AI Player] 当前没有可用的建议模板"), false);
+            }
+        } catch (Exception e) {
+            source.sendFeedback(() -> Text.literal("§c[AI Player] 建议触发失败: " + e.getMessage()), false);
         }
         return 1;
     }

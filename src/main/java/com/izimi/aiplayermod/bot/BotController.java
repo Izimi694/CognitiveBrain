@@ -2,6 +2,9 @@ package com.izimi.aiplayermod.bot;
 
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.api.*;
+import com.izimi.aiplayermod.autonomy.IdleBrain;
+import com.izimi.aiplayermod.autonomy.NaiveBayesClassifier;
+import com.izimi.aiplayermod.reflexes.InnateReflexes;
 import com.izimi.aiplayermod.skill.ConditionedReflex;
 import com.izimi.aiplayermod.state.StateManager;
 import com.izimi.aiplayermod.task.TaskExecutor;
@@ -19,6 +22,9 @@ public class BotController {
     private final AITaskPlanner aiTaskPlanner;
     private final AIChatHandler aiChatHandler;
     private final AIClient aiClient;
+    private final IdleBrain idleBrain;
+    private final NaiveBayesClassifier socialClassifier;
+    private final InnateReflexes innateReflexes;
 
     private int tickCounter = 0;
     private int stateSaveInterval = 200;
@@ -28,7 +34,9 @@ public class BotController {
                          TaskExecutor taskExecutor, StateManager stateManager,
                          ConditionedReflex conditionedReflex,
                          AITaskPlanner aiTaskPlanner, AIChatHandler aiChatHandler,
-                         AIClient aiClient) {
+                         AIClient aiClient, IdleBrain idleBrain,
+                         NaiveBayesClassifier socialClassifier,
+                         InnateReflexes innateReflexes) {
         this.botSpawner = botSpawner;
         this.taskManager = taskManager;
         this.taskExecutor = taskExecutor;
@@ -37,6 +45,9 @@ public class BotController {
         this.aiTaskPlanner = aiTaskPlanner;
         this.aiChatHandler = aiChatHandler;
         this.aiClient = aiClient;
+        this.idleBrain = idleBrain;
+        this.socialClassifier = socialClassifier;
+        this.innateReflexes = innateReflexes;
     }
 
     public void onTick(MinecraftServer server) {
@@ -48,7 +59,6 @@ public class BotController {
         if (botPlayer == null) return;
 
         ServerPlayerEntity bot = botPlayer.asEntity();
-        bot.tick();
 
         if (tickCounter % stateSaveInterval == 0) {
             stateManager.saveState(bot);
@@ -58,6 +68,16 @@ public class BotController {
             pollAIResults(bot);
         }
 
+        // Priority 0: Safety reflexes — always first, every tick, 0 API
+        if (innateReflexes != null) {
+            InnateReflexes.ReflexResult safety = innateReflexes.checkSafety(bot);
+            if (safety.handled()) {
+                AIPlayerMod.LOGGER.debug("[BotController] P0安全反射: {}", safety.reason());
+                return;
+            }
+        }
+
+        // Priority 1: Player task → conditioned reflex / trial & error
         var activeTask = taskManager.getActiveTask();
         if (activeTask != null && "running".equals(activeTask.getStatus())) {
             var reflexSkill = conditionedReflex.match(activeTask);
@@ -66,7 +86,56 @@ public class BotController {
             } else {
                 taskExecutor.executeTask(bot, activeTask);
             }
+            return;
         }
+
+        // Priority 2: IdleBrain — idle >30s, send suggestion, 0 API
+        if (idleBrain != null) {
+            IdleBrain.SuggestionTemplate suggestion = idleBrain.onTick();
+            if (suggestion != null) {
+                bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + suggestion.text()));
+                return;
+            }
+        }
+
+        // Priority 3: Social mirror — naive bayes crowd wisdom, 0 API
+        if (trySocialMirror(bot)) return;
+
+        // Priority 4: Non-safety reflexes — collect, avoid lava, shelter, 0 API
+        if (innateReflexes != null) {
+            InnateReflexes.ReflexResult nonSafety = innateReflexes.checkNonSafety(bot);
+            if (nonSafety.handled()) {
+                AIPlayerMod.LOGGER.debug("[BotController] P4非安全反射: {}", nonSafety.reason());
+                return;
+            }
+        }
+
+        // Priority 5: Idle animation — look around, random wander, 0 API
+        if (innateReflexes != null) {
+            innateReflexes.doIdleAnimation(bot);
+        }
+    }
+
+    private boolean trySocialMirror(ServerPlayerEntity bot) {
+        if (socialClassifier == null) return false;
+
+        var socialObs = AIPlayerMod.getSocialObserver();
+        var familiarity = AIPlayerMod.getFamiliarityTracker();
+        if (socialObs == null || familiarity == null) return false;
+
+        int nearbyCount = socialObs.getNearbyPlayerCount();
+        if (nearbyCount == 0) return false;
+
+        var windows = socialObs.getPlayerWindows();
+        NaiveBayesClassifier.Classification result = socialClassifier.classify(windows, familiarity);
+
+        if (result == null || !result.meetsThreshold()) return false;
+
+        String taskGoal = result.toTaskGoal();
+        taskManager.createTask(taskGoal);
+        bot.sendMessage(Text.literal("§b[AI_Assistant] §7(观察" + nearbyCount +
+                "名玩家，置信度" + String.format("%.2f", result.confidence()) + ")"));
+        return true;
     }
 
     private void pollAIResults(ServerPlayerEntity bot) {
