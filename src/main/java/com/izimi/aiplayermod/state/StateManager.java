@@ -51,7 +51,7 @@ public class StateManager {
     public void saveState(ServerPlayerEntity bot) {
         PlayerState state = collectState(bot);
         if (state != null) {
-            JsonUtil.writeToFileSafe(FileUtil.getStatePath(), state);
+            JsonUtil.writeToFileSafeAtomic(FileUtil.getStatePath(), state);
         }
     }
 

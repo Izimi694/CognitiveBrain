@@ -28,7 +28,26 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-	
+
+	testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+	testImplementation 'org.mockito:mockito-core:5.10.0'
+	testImplementation 'org.mockito:mockito-junit-jupiter:5.10.0'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testRuntimeOnly 'org.junit.platform:junit-platform-console-standalone:1.10.2'
+}
+
+test {
+	useJUnitPlatform()
+}
+
+task runTests(type: JavaExec, dependsOn: testClasses) {
+	group = 'verification'
+	description = 'Run unit tests (bypasses Loom worker)'
+	mainClass = 'org.junit.platform.console.ConsoleLauncher'
+	classpath = files(sourceSets.test.java.destinationDirectory) + sourceSets.test.runtimeClasspath
+	args '--select-package=com.izimi.aiplayermod'
+	args '--details=tree'
+	args '--reports-dir=build/test-results'
 }
 
 processResources {

@@ -26,6 +26,6 @@ public class ModConfig {
     }
 
     public void save() {
-        JsonUtil.writeToFileSafe(FileUtil.getConfigPath(), this);
+        JsonUtil.writeToFileSafeAtomic(FileUtil.getConfigPath(), this);
     }
 }

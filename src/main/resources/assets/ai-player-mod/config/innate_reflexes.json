@@ -1,0 +1,9 @@
+[
+  {"id": "critical", "priority": 0, "critical": true, "triggers": [{"type": "HEALTH_BELOW", "value": 2.0, "range": 0}, {"type": "MONSTER_NEARBY", "value": 0.0, "range": 3}], "action": {"type": "flee", "params": {"speed": 0.3}}, "enabled": true},
+  {"id": "flee", "priority": 0, "critical": false, "triggers": [{"type": "HEALTH_BELOW", "value": 10.0, "range": 0}, {"type": "MONSTER_NEARBY", "value": 0.0, "range": 10}], "action": {"type": "flee", "params": {"speed": 0.3}}, "enabled": true},
+  {"id": "eat", "priority": 0, "critical": false, "triggers": [{"type": "HUNGER_BELOW", "value": 6.0, "range": 0}], "action": {"type": "eat", "params": {}}, "enabled": true},
+  {"id": "retreat", "priority": 1, "critical": false, "triggers": [{"type": "HEALTH_BELOW", "value": 6.0, "range": 0}, {"type": "MONSTER_NEARBY", "value": 0.0, "range": 20}], "action": {"type": "retreat", "params": {"speed": 0.25}}, "enabled": true},
+  {"id": "avoid_lava", "priority": 1, "critical": false, "triggers": [{"type": "LAVA_NEARBY", "value": 0.0, "range": 3}], "action": {"type": "avoidLava", "params": {"speed": 0.2}}, "enabled": true},
+  {"id": "seek_shelter", "priority": 1, "critical": false, "triggers": [{"type": "TIME_OF_DAY", "value": 0.0, "range": 5}], "action": {"type": "seekShelter", "params": {"speed": 0.1}}, "enabled": true},
+  {"id": "collect_item", "priority": 1, "critical": false, "triggers": [{"type": "ITEM_NEARBY", "value": 0.0, "range": 5}], "action": {"type": "collectItem", "params": {"speed": 0.15}}, "enabled": true}
+]

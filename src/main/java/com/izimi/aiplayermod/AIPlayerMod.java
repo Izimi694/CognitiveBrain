@@ -1,29 +1,36 @@
 package com.izimi.aiplayermod;
 
-import com.izimi.aiplayermod.api.*;
-import com.izimi.aiplayermod.autonomy.FamiliarityTracker;
-import com.izimi.aiplayermod.autonomy.IdleBrain;
-import com.izimi.aiplayermod.autonomy.NaiveBayesClassifier;
-import com.izimi.aiplayermod.autonomy.SocialObserver;
-import com.izimi.aiplayermod.bot.BotSpawner;
-import com.izimi.aiplayermod.bot.BotController;
-import com.izimi.aiplayermod.character.CharacterManager;
-import com.izimi.aiplayermod.character.BehaviorObserver;
-import com.izimi.aiplayermod.character.EvaluationCycle;
-import com.izimi.aiplayermod.character.PersonalityStress;
-import com.izimi.aiplayermod.character.ThresholdConfig;
+import com.izimi.aiplayermod.cortex.planner.PlanManager;
+import com.izimi.aiplayermod.brainstem.adapter.BasicActionAdapter;
+import com.izimi.aiplayermod.brainstem.adapter.MinecraftActionAdapter;
+import com.izimi.aiplayermod.cortex.api.*;
+import com.izimi.aiplayermod.cortex.inhibitor.InhibitoryControl;
+import com.izimi.aiplayermod.amygdala.FamiliarityTracker;
+import com.izimi.aiplayermod.brainstem.IdleBrain;
+import com.izimi.aiplayermod.amygdala.NaiveBayesClassifier;
+import com.izimi.aiplayermod.amygdala.SocialObserver;
+import com.izimi.aiplayermod.brainstem.bot.BotSpawner;
+import com.izimi.aiplayermod.brainstem.bot.BotController;
+import com.izimi.aiplayermod.amygdala.character.CharacterManager;
+import com.izimi.aiplayermod.amygdala.character.BehaviorEventHandler;
+import com.izimi.aiplayermod.amygdala.character.BehaviorStats;
+import com.izimi.aiplayermod.amygdala.character.BehaviorAnalyzer;
+import com.izimi.aiplayermod.amygdala.character.EvaluationCycle;
+import com.izimi.aiplayermod.amygdala.character.PersonalityStress;
+import com.izimi.aiplayermod.amygdala.character.ThresholdConfig;
 import com.izimi.aiplayermod.command.AICommand;
 import com.izimi.aiplayermod.config.ModConfig;
-import com.izimi.aiplayermod.memory.MemoryManager;
-import com.izimi.aiplayermod.memory.MemoryQuery;
+import com.izimi.aiplayermod.hippocampus.MemoryManager;
+import com.izimi.aiplayermod.hippocampus.MemoryQuery;
 import com.izimi.aiplayermod.state.StateManager;
-import com.izimi.aiplayermod.task.TaskManager;
-import com.izimi.aiplayermod.task.TaskExecutor;
-import com.izimi.aiplayermod.skill.SkillManager;
-import com.izimi.aiplayermod.skill.ConditionedReflex;
+import com.izimi.aiplayermod.cortex.task.TaskManager;
+import com.izimi.aiplayermod.cortex.task.TaskExecutor;
+import com.izimi.aiplayermod.brainstem.skill.SkillManager;
+import com.izimi.aiplayermod.amygdala.ConditionedReflex;
 import com.izimi.aiplayermod.log.ExecutionLogger;
-import com.izimi.aiplayermod.learning.LearningSystem;
-import com.izimi.aiplayermod.reflexes.InnateReflexes;
+import com.izimi.aiplayermod.amygdala.learning.LearningSystem;
+import com.izimi.aiplayermod.amygdala.reflexes.InnateReflexRegistry;
+import com.izimi.aiplayermod.amygdala.reflexes.MinecraftReflexEvaluator;
 import com.izimi.aiplayermod.util.FileUtil;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -53,7 +60,9 @@ public class AIPlayerMod implements ModInitializer {
     private static BotSpawner botSpawner;
     private static BotController botController;
     private static CharacterManager characterManager;
-    private static BehaviorObserver behaviorObserver;
+    private static BehaviorEventHandler behaviorEventHandler;
+    private static BehaviorStats behaviorStats;
+    private static BehaviorAnalyzer behaviorAnalyzer;
     private static ExecutionLogger executionLogger;
     private static PersonalityStress personalityStress;
     private static IdleBrain idleBrain;
@@ -63,11 +72,14 @@ public class AIPlayerMod implements ModInitializer {
     private static ThresholdConfig thresholdConfig;
     private static EvaluationCycle evaluationCycle;
     private static NaiveBayesClassifier socialClassifier;
-    private static InnateReflexes innateReflexes;
+    private static InnateReflexRegistry reflexRegistry;
     private static AIClient aiClient;
     private static AITaskPlanner aiTaskPlanner;
     private static AIChatHandler aiChatHandler;
     private static AIMemoryGenerator aiMemoryGenerator;
+    private static BasicActionAdapter actionAdapter;
+    private static PlanManager planManager;
+    private static InhibitoryControl inhibitor;
 
     @Override
     public void onInitialize() {
@@ -75,9 +87,10 @@ public class AIPlayerMod implements ModInitializer {
 
         try {
             FileUtil.ensureDirectories();
-            LOGGER.info("[AI Player] 目录结构已创建");
+            FileUtil.cleanupTempFiles();
+            LOGGER.info("[AI Player] 目录结构已创建, 已清理残留tmp文件");
         } catch (Exception e) {
-            LOGGER.error("[AI Player] 目录创建失败", e);
+            LOGGER.error("[AI Player] 目录创建/清理失败", e);
         }
 
         config = ModConfig.load();
@@ -91,6 +104,7 @@ public class AIPlayerMod implements ModInitializer {
         aiTaskPlanner = new AITaskPlanner(aiClient);
         aiChatHandler = new AIChatHandler(aiClient);
         aiMemoryGenerator = new AIMemoryGenerator(aiClient);
+        planManager = new PlanManager(aiTaskPlanner);
 
         personalityStress = new PersonalityStress(config);
         LOGGER.info("[AI Player] 性格压力系统已初始化");
@@ -102,10 +116,22 @@ public class AIPlayerMod implements ModInitializer {
         taskManager = new TaskManager();
         skillManager = new SkillManager();
         executionLogger = new ExecutionLogger();
-        conditionedReflex = new ConditionedReflex(skillManager, config);
+        reflexRegistry = new InnateReflexRegistry(new MinecraftReflexEvaluator());
+        var reflexesPath = FileUtil.getInnateReflexesPath();
+        reflexRegistry.loadFromJson(reflexesPath);
+        if (reflexRegistry.size() == 0) {
+            reflexRegistry.loadDefaults();
+            reflexRegistry.saveToJson(reflexesPath);
+            LOGGER.info("[AI Player] 已创建默认先天反射配置: {}", reflexesPath);
+        }
+        LOGGER.info("[AI Player] 先天反射注册表已初始化, {} 个反射", reflexRegistry.size());
+        actionAdapter = new MinecraftActionAdapter();
+        conditionedReflex = new ConditionedReflex(skillManager, config, actionAdapter);
         taskExecutor = new TaskExecutor(taskManager, skillManager, stateManager, executionLogger);
         characterManager = new CharacterManager(config);
-        behaviorObserver = new BehaviorObserver(characterManager, config, personalityStress);
+        behaviorStats = new BehaviorStats();
+        behaviorAnalyzer = new BehaviorAnalyzer(characterManager, personalityStress);
+        behaviorEventHandler = new BehaviorEventHandler(behaviorStats, behaviorAnalyzer);
         idleBrain = new IdleBrain(taskManager, skillManager);
 
         thresholdConfig = ThresholdConfig.load();
@@ -113,16 +139,16 @@ public class AIPlayerMod implements ModInitializer {
         familiarityTracker = new FamiliarityTracker();
         socialObserver = new SocialObserver(familiarityTracker);
         socialClassifier = new NaiveBayesClassifier(thresholdConfig);
-        innateReflexes = new InnateReflexes();
+        inhibitor = new InhibitoryControl();
 
         botController = new BotController(botSpawner, taskManager, taskExecutor, stateManager,
                 conditionedReflex, aiTaskPlanner, aiChatHandler, aiClient, idleBrain,
-                socialClassifier, innateReflexes);
+                socialClassifier, reflexRegistry, inhibitor);
 
         learningSystem = new LearningSystem(conditionedReflex, skillManager);
-        behaviorObserver.addLearningListener(learningSystem::onEvent);
+        behaviorEventHandler.addLearningListener(learningSystem::onEvent);
 
-        behaviorObserver.addLearningListener(socialObserver::onEvent);
+        behaviorEventHandler.addLearningListener(socialObserver::onEvent);
 
         LOGGER.info("[AI Player] P1.5 社交镜像系统已初始化 (conformity={:.2f})",
                 thresholdConfig.conformityCoefficient);
@@ -149,7 +175,7 @@ public class AIPlayerMod implements ModInitializer {
             updateNearbyPlayers(server);
         });
 
-        behaviorObserver.register();
+        behaviorEventHandler.register();
 
         ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) -> {
             if (sender != null) {
@@ -223,7 +249,11 @@ public class AIPlayerMod implements ModInitializer {
     public static SocialObserver getSocialObserver() { return socialObserver; }
     public static ThresholdConfig getThresholdConfig() { return thresholdConfig; }
     public static EvaluationCycle getEvaluationCycle() { return evaluationCycle; }
-    public static InnateReflexes getInnateReflexes() { return innateReflexes; }
+    public static InnateReflexRegistry getReflexRegistry() { return reflexRegistry; }
+    public static BasicActionAdapter getActionAdapter() { return actionAdapter; }
+    public static PlanManager getPlanManager() { return planManager; }
+    public static InhibitoryControl getInhibitor() { return inhibitor; }
+    public static BehaviorStats getBehaviorStats() { return behaviorStats; }
 
     private static void updateNearbyPlayers(MinecraftServer server) {
         if (socialObserver == null || botSpawner == null || !botSpawner.isSpawned()) return;

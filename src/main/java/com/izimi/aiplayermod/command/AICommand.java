@@ -1,7 +1,7 @@
 package com.izimi.aiplayermod.command;
 
 import com.izimi.aiplayermod.AIPlayerMod;
-import com.izimi.aiplayermod.autonomy.IdleBrain;
+import com.izimi.aiplayermod.brainstem.IdleBrain;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.server.command.ServerCommandSource;
@@ -189,11 +189,23 @@ public class AICommand {
                 source.sendFeedback(() -> Text.literal("§7[AI Player] 性格系统未初始化"), false);
                 return 0;
             }
+
+            source.sendFeedback(() -> Text.literal("§6===== AI 个性标签 ====="), false);
+            var evaluationCycle = AIPlayerMod.getEvaluationCycle();
+            if (evaluationCycle != null) {
+                var tags = evaluationCycle.getPersonalityTags();
+                if (tags != null && !tags.isEmpty()) {
+                    source.sendFeedback(() -> Text.literal("§e" + tags.format()), false);
+                } else {
+                    source.sendFeedback(() -> Text.literal("§7暂无性格标签，完成5个任务后自动分析"), false);
+                }
+            }
+
             var prefs = characterManager.getPreferences();
             if (prefs == null || prefs.isEmpty()) {
-                source.sendFeedback(() -> Text.literal("§7[AI Player] 暂无偏好数据"), false);
+                source.sendFeedback(() -> Text.literal("§7暂无偏好数据"), false);
             } else {
-                source.sendFeedback(() -> Text.literal("§6===== AI 个性偏好 ====="), false);
+                source.sendFeedback(() -> Text.literal("§6===== AI 偏好 ====="), false);
                 for (var pref : prefs) {
                     String icon = pref.valence >= 0.5 ? "§a❤" : pref.valence <= -0.5 ? "§c✖" : "§7●";
                     source.sendFeedback(() -> Text.literal(icon + " §f" + pref.target + " §7(" + String.format("%.2f", pref.valence) + ")"), false);
