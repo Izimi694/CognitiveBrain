@@ -8,6 +8,7 @@ public record ReflexTrigger(TriggerType type, double value, int range) {
         MONSTER_NEARBY,
         LAVA_NEARBY,
         TIME_OF_DAY,
-        ITEM_NEARBY
+        ITEM_NEARBY,
+        CHAT_PRESENCE
     }
 }

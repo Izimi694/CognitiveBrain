@@ -86,6 +86,10 @@ public class FileUtil {
         return getConfigDir().resolve("bot_params.json");
     }
 
+    public static Path getInnateReflexWeightsPath() {
+        return getConfigDir().resolve("innate_reflex_weights.json");
+    }
+
     public static Path getActiveTaskPath() {
         return getTasksDir().resolve("active_task.json");
     }

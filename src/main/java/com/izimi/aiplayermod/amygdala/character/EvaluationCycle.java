@@ -54,17 +54,15 @@ public class EvaluationCycle {
         lastBatchTime = System.currentTimeMillis();
 
         String joined = String.join("\n", batch);
-        String lastReflex = conditionedReflex.getLastExecutedReflexId();
-        String reflexContext = lastReflex != null
-                ? "Bot最近执行的反射: " + lastReflex
-                : "Bot最近没有执行特定反射";
+        String reflexContext = conditionedReflex.getLastReflexSummary();
 
         AIMessage systemMsg = new AIMessage("system", """
                 你是一个游戏角色的行为强化系统。以下是玩家对bot最近的评价列表。
                 判断每条评价是鼓励还是批评哪种行为。
-                输出JSON数组格式: [{"reflexHint":"dig","delta":0.15}, ...]
-                delta范围[-0.2, 0.2]。正面评价用正delta，负面用负delta。
-                如果无明确指向的行为，输出{"reflexHint":"","delta":0}。
+                如果评价明确指向bot最近执行的反射，请直接使用完整的reflexId。
+                输出JSON数组格式: [{"reflexId":"reflex_dig_iron_ore","delta":0.15}, ...]
+                delta范围[-0.2, 0.2]。正面评价正delta，负面评价负delta。
+                如果无明确指向，输出{"reflexId":"","delta":0}。
                 只输出JSON数组，不要其他内容。""");
         AIMessage userMsg = new AIMessage("user",
                 "评价:\n" + joined + "\n\n" + reflexContext);
@@ -80,15 +78,13 @@ public class EvaluationCycle {
 
                     for (int i = 0; i < array.size(); i++) {
                         var obj = array.get(i).getAsJsonObject();
-                        String hint = obj.has("reflexHint") && !obj.get("reflexHint").isJsonNull()
-                                ? obj.get("reflexHint").getAsString() : "";
+                        String hint = resolveReflexHint(obj);
                         double delta = obj.has("delta") ? obj.get("delta").getAsDouble() : 0;
                         if (hint.isEmpty() || delta == 0) continue;
 
                         String matchedId = conditionedReflex.matchReflexIdByHint(hint);
                         if (matchedId != null) {
-                            conditionedReflex.reinforce(matchedId, delta);
-                            AIPlayerMod.LOGGER.info("[EvaluationCycle] 反射强化: {} delta={}", matchedId, delta);
+                            conditionedReflex.reinforceWithSpill(matchedId, delta);
                         }
                     }
                 } catch (Exception e) {
@@ -98,5 +94,15 @@ public class EvaluationCycle {
         } catch (Exception e) {
             AIPlayerMod.LOGGER.warn("[EvaluationCycle] 批量强化失败: {}", e.getMessage());
         }
+    }
+
+    private String resolveReflexHint(com.google.gson.JsonObject obj) {
+        if (obj.has("reflexId") && !obj.get("reflexId").isJsonNull()) {
+            return obj.get("reflexId").getAsString();
+        }
+        if (obj.has("reflexHint") && !obj.get("reflexHint").isJsonNull()) {
+            return obj.get("reflexHint").getAsString();
+        }
+        return "";
     }
 }

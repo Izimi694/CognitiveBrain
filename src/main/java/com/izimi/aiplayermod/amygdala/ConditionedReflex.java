@@ -31,6 +31,7 @@ public class ConditionedReflex {
     private static final double WEIGHT_MAX = 1.0;
     private static final double EW_STW_RATIO = 0.7;
     private static final double EW_LTB_RATIO = 0.3;
+    private static final double SPILL_RATIO = 0.3;
 
     private final SkillManager skillManager;
     private final ModConfig config;
@@ -633,6 +634,26 @@ public class ConditionedReflex {
         return lastExecutedReflexId;
     }
 
+    public String getReflexContext(String skillId) {
+        if (skillId == null) return null;
+        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        if (data == null) return null;
+        String category = (String) data.getOrDefault("category", "");
+        String target = (String) data.getOrDefault("target", "");
+        String displayName = (String) data.getOrDefault("displayName", skillId);
+        double stw = ((Number) data.getOrDefault("shortTermWeight", DEFAULT_WEIGHT)).doubleValue();
+        double ltb = ((Number) data.getOrDefault("longTermBaseline", DEFAULT_WEIGHT)).doubleValue();
+        return String.format("reflexId=%s, category=%s, target=%s, displayName=%s, stw=%.2f, ltb=%.2f",
+                skillId, category, target, displayName, stw, ltb);
+    }
+
+    public String getLastReflexSummary() {
+        if (lastExecutedReflexId == null) return "最近没有执行特定反射";
+        String ctx = getReflexContext(lastExecutedReflexId);
+        return "Bot最近执行的反射: " + (ctx != null ? ctx : lastExecutedReflexId);
+    }
+
     public void moveToArchived(String skillId, Map<String, Object> data) {
         Path src = FileUtil.getConditionedDir().resolve(skillId + ".json");
         Path dst = FileUtil.getArchivedDir().resolve(skillId + ".json");
@@ -666,16 +687,71 @@ public class ConditionedReflex {
 
     public String matchReflexIdByHint(String hint) {
         if (hint == null || hint.isEmpty()) return null;
+
+        if (skillManager.getSkill(hint) != null) {
+            AIPlayerMod.LOGGER.debug("[ConditionedReflex] 精确匹配: {}", hint);
+            return hint;
+        }
+
         String lower = hint.toLowerCase();
-        if (lastExecutedReflexId != null && lastExecutedReflexId.contains(lower)) {
+
+        if (lastExecutedReflexId != null && lastExecutedReflexId.toLowerCase().contains(lower)) {
+            AIPlayerMod.LOGGER.debug("[ConditionedReflex] 最近执行匹配: {} <- {}", lastExecutedReflexId, hint);
             return lastExecutedReflexId;
         }
+
+        if (lastExecutedReflexId != null) {
+            String lastCategory = getReflexCategory(lastExecutedReflexId);
+            if (lastCategory != null) {
+                for (String id : skillManager.getSkills().keySet()) {
+                    if (id.equals(lastExecutedReflexId)) continue;
+                    String cat = getReflexCategory(id);
+                    if (lastCategory.equals(cat) && id.toLowerCase().contains(lower)) {
+                        AIPlayerMod.LOGGER.debug("[ConditionedReflex] 同category匹配: {} <- {} (cat={})", id, hint, lastCategory);
+                        return id;
+                    }
+                }
+            }
+        }
+
         for (String id : skillManager.getSkills().keySet()) {
-            if (id.contains(lower)) {
+            if (id.toLowerCase().contains(lower)) {
+                AIPlayerMod.LOGGER.warn("[ConditionedReflex] 兜底子串匹配(LLM输出可能不够精确): {} <- {}", id, hint);
                 return id;
             }
         }
+
+        AIPlayerMod.LOGGER.warn("[ConditionedReflex] 无匹配反射: hint={}", hint);
         return null;
+    }
+
+    private String getReflexCategory(String skillId) {
+        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        if (data == null) return null;
+        return (String) data.getOrDefault("category", null);
+    }
+
+    public void reinforceWithSpill(String skillId, double delta) {
+        reinforce(skillId, delta);
+        AIPlayerMod.LOGGER.info("[ConditionedReflex] 反射强化: {} delta={}", skillId, delta);
+
+        String category = getReflexCategory(skillId);
+        if (category == null) return;
+
+        double spill = delta * SPILL_RATIO;
+        int count = 0;
+        for (String id : skillManager.getSkills().keySet()) {
+            if (id.equals(skillId)) continue;
+            String cat = getReflexCategory(id);
+            if (category.equals(cat)) {
+                reinforce(id, spill);
+                count++;
+            }
+        }
+        if (count > 0) {
+            AIPlayerMod.LOGGER.debug("[ConditionedReflex] 溢出强化: {}个同category反射 x{:.3f} (cat={})", count, spill, category);
+        }
     }
 
     private void analyzeAndGenerate() {

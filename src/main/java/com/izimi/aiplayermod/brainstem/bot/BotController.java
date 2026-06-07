@@ -147,7 +147,7 @@ public class BotController {
         if (trySocialMirror(bot)) return;
 
         if (reflexRegistry != null) {
-            InnateReflex nonSafety = reflexRegistry.match(bot).stream()
+            InnateReflex nonSafety = reflexRegistry.matchWeighted(bot).stream()
                     .filter(r -> r.priority() > 0)
                     .findFirst().orElse(null);
             if (nonSafety != null) {
@@ -165,14 +165,29 @@ public class BotController {
         var adapter = AIPlayerMod.getActionAdapter();
         if (adapter == null) return;
         var action = reflex.action();
+        boolean executed = false;
+        boolean success = true;
         switch (action.type()) {
-            case "flee" -> adapter.flee(bot, action.getDouble("speed", 0.3));
-            case "eat" -> adapter.eat(bot);
-            case "retreat" -> adapter.retreat(bot, action.getDouble("speed", 0.25));
-            case "avoidLava" -> adapter.avoidLava(bot, action.getDouble("speed", 0.2));
-            case "seekShelter" -> adapter.seekShelter(bot, action.getDouble("speed", 0.1));
-            case "collectItem" -> adapter.collectItem(bot, action.getDouble("speed", 0.15));
+            case "flee" -> { adapter.flee(bot, action.getDouble("speed", 0.3)); executed = true; }
+            case "eat" -> { var r = adapter.eat(bot); executed = r.executed(); success = r.success(); }
+            case "retreat" -> { adapter.retreat(bot, action.getDouble("speed", 0.25)); executed = true; }
+            case "avoidLava" -> { adapter.avoidLava(bot, action.getDouble("speed", 0.2)); executed = true; }
+            case "seekShelter" -> { adapter.seekShelter(bot, action.getDouble("speed", 0.1)); executed = true; }
+            case "collectItem" -> { var r = adapter.collectItem(bot, action.getDouble("speed", 0.15)); executed = r.executed(); success = r.success(); }
+            case "invokeLLM" -> {
+                var pc = AIPlayerMod.consumePendingChat();
+                if (pc != null && aiChatHandler != null && aiClient.isConfigured()) {
+                    var state = stateManager.loadState();
+                    var task = taskManager.getActiveTask();
+                    var mems = AIPlayerMod.getMemoryManager().getRecentMemories();
+                    aiChatHandler.handleChat(pc.message(), state, task, mems);
+                    executed = true;
+                }
+            }
             default -> AIPlayerMod.LOGGER.warn("[BotController] 未知反射动作: {}", action.type());
+        }
+        if (executed && reflexRegistry != null) {
+            reflexRegistry.reinforceOnDispatch(reflex.id(), success);
         }
     }
 

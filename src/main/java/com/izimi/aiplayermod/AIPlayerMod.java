@@ -75,6 +75,10 @@ public class AIPlayerMod implements ModInitializer {
     private static PlanManager planManager;
     private static InhibitoryControl inhibitor;
 
+    public record PendingChat(String message, String stateStr, String taskStr, String memsStr) {}
+    private static PendingChat pendingChat;
+    private static long pendingChatTime;
+
     @Override
     public void onInitialize() {
         LOGGER.info("[AI Player] 初始化开始...");
@@ -195,11 +199,15 @@ public class AIPlayerMod implements ModInitializer {
                         evaluationCycle.checkMessage(content);
                     }
 
-                    if (aiChatHandler != null && aiClient.isConfigured()) {
+                    if (aiClient.isConfigured()) {
                         var state = stateManager.loadState();
                         var task = taskManager.getActiveTask();
                         var mems = memoryManager.getRecentMemories();
-                        aiChatHandler.handleChat(content, state, task, mems);
+                        pendingChat = new PendingChat(content,
+                                state != null ? state.toString() : "",
+                                task != null ? task.getGoal() : "",
+                                mems != null ? mems.toString() : "");
+                        pendingChatTime = System.currentTimeMillis();
                     }
                 }
             }
@@ -233,6 +241,19 @@ public class AIPlayerMod implements ModInitializer {
     public static PlanManager getPlanManager() { return planManager; }
     public static InhibitoryControl getInhibitor() { return inhibitor; }
     public static BehaviorStats getBehaviorStats() { return behaviorStats; }
+
+    public static boolean hasPendingChat(double timeoutSecs) {
+        if (pendingChat == null) return false;
+        long elapsed = (System.currentTimeMillis() - pendingChatTime) / 1000;
+        return elapsed < (timeoutSecs > 0 ? timeoutSecs : 30);
+    }
+
+    public static PendingChat consumePendingChat() {
+        PendingChat pc = pendingChat;
+        pendingChat = null;
+        pendingChatTime = 0;
+        return pc;
+    }
 
     private static void updateNearbyPlayers(MinecraftServer server) {
         if (socialObserver == null || botSpawner == null || !botSpawner.isSpawned()) return;

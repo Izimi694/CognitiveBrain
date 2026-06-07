@@ -29,11 +29,11 @@ class ReflexRegistryTest {
     }
 
     @Test
-    @DisplayName("loadDefaults loads 7 built-in reflexes")
-    void loadDefaultsLoadsSeven() {
+    @DisplayName("loadDefaults loads 8 built-in reflexes")
+    void loadDefaultsLoadsEight() {
         InnateReflexRegistry registry = new InnateReflexRegistry(new MinecraftReflexEvaluator());
         registry.loadDefaults();
-        assertEquals(7, registry.size());
+        assertEquals(8, registry.size());
     }
 
     @Test
@@ -107,7 +107,7 @@ class ReflexRegistryTest {
         InnateReflexRegistry registry = new InnateReflexRegistry(new MinecraftReflexEvaluator());
         registry.loadDefaults();
         for (InnateReflex r : registry.all()) {
-            if (r.id().equals("avoid_lava") || r.id().equals("seek_shelter") || r.id().equals("collect_item") || r.id().equals("retreat")) {
+            if (r.id().equals("avoid_lava") || r.id().equals("seek_shelter") || r.id().equals("collect_item") || r.id().equals("retreat") || r.id().equals("vocal_response")) {
                 assertTrue(r.priority() > 0, "Reflex " + r.id() + " should have priority > 0");
             }
         }
@@ -128,10 +128,10 @@ class ReflexRegistryTest {
     }
 
     @Test
-    @DisplayName("ReflexTrigger enum has all 6 types")
+    @DisplayName("ReflexTrigger enum has all 7 types")
     void triggerTypes() {
         ReflexTrigger.TriggerType[] types = ReflexTrigger.TriggerType.values();
-        assertEquals(6, types.length);
+        assertEquals(7, types.length);
     }
 
     @Test

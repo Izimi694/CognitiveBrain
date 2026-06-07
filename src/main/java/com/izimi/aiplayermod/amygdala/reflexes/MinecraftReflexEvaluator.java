@@ -31,6 +31,7 @@ public class MinecraftReflexEvaluator {
             case LAVA_NEARBY -> checkLavaNearby(bot, trigger.range());
             case TIME_OF_DAY -> checkTimeOfDay(bot, trigger.range());
             case ITEM_NEARBY -> checkItemNearby(bot, trigger.range());
+            case CHAT_PRESENCE -> checkChatPending(bot, trigger.value());
         };
     }
 
@@ -94,6 +95,10 @@ public class MinecraftReflexEvaluator {
     public boolean hasSolidRoof(ServerWorld world, BlockPos pos) {
         BlockPos above = pos.up();
         return !world.getBlockState(above).isAir() && world.getBlockState(above).isOpaque();
+    }
+
+    private boolean checkChatPending(ServerPlayerEntity bot, double timeoutSecs) {
+        return com.izimi.aiplayermod.AIPlayerMod.hasPendingChat(timeoutSecs);
     }
 
     public boolean hasFoodInHotbar(ServerPlayerEntity bot) {
