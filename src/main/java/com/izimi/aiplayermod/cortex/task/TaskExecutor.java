@@ -4,7 +4,6 @@ import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.log.ExecutionLogger;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
 import com.izimi.aiplayermod.brainstem.skill.SkillManager;
-import com.izimi.aiplayermod.state.StateManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 
 import java.util.HashMap;
@@ -13,18 +12,15 @@ import java.util.Map;
 public class TaskExecutor {
     private final TaskManager taskManager;
     private final SkillManager skillManager;
-    private final StateManager stateManager;
     private final ExecutionLogger executionLogger;
 
     private int executionTick = 0;
-    private int retryCount = 0;
     private static final int SKILL_TIMEOUT_TICKS = 6000;
 
     public TaskExecutor(TaskManager taskManager, SkillManager skillManager,
-                        StateManager stateManager, ExecutionLogger executionLogger) {
+                         ExecutionLogger executionLogger) {
         this.taskManager = taskManager;
         this.skillManager = skillManager;
-        this.stateManager = stateManager;
         this.executionLogger = executionLogger;
     }
 
@@ -71,7 +67,6 @@ public class TaskExecutor {
                 );
 
                 if (result.success()) {
-                    retryCount = 0;
                     current.status = "success";
                     task.progress.completedCount++;
                     taskManager.saveActiveTask();
@@ -90,17 +85,14 @@ public class TaskExecutor {
                         AIPlayerMod.LOGGER.warn("[TaskExecutor] 确定无法执行，跳过: {} (goal={})",
                                 current.skillId, current.goal);
                         current.status = "skipped";
-                        retryCount = 0;
                         return;
                     }
 
-                    retryCount++;
                     int maxRetries = getMaxRetries();
                     if (current.attemptCount >= maxRetries) {
                         AIPlayerMod.LOGGER.warn("[TaskExecutor] 子任务失败{}次: {} (goal={})",
                                 maxRetries, current.skillId, current.goal);
                         current.status = "skipped";
-                        retryCount = 0;
                     }
                 }
             }
@@ -123,7 +115,6 @@ public class TaskExecutor {
 
     public void resetExecutionTick() {
         executionTick = 0;
-        retryCount = 0;
     }
 
     private int getMaxRetries() {

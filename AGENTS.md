@@ -77,6 +77,60 @@
 
 ---
 
+### 脑启发设计方向（论文支撑）
+
+以下 11 个方向从神经科学提取，映射到架构的优化目标：
+
+| # | 生物学机制 | 关键论文 | 工程映射 | 优先级 |
+|:--:|---------|---------|---------|:--:|
+| Q1 | 皮层柱稀疏激活 — Hebbian 可塑性削弱跨柱耦合 | Cortical amplification (J Neurophysiol 2017) | 按功能域分组 tick，只激活相关层 | 🟡 |
+| Q2 | 基底节概率门控 — 直接/间接通路 = 行动不确定性编码 | Believer-Skept meets Actor-Critic (Front Neurosci 2016) | `selectPerspective` + `labelProblem` → 统一贝叶斯 | 🟡 |
+| Q3 | 节律性卸载 — 海马尖波涟漪在线更新皮层表征 | Human hippocampal ripples (Nat Neurosci 2026) | 低优先级任务(固化/整合)移到空闲期批处理 | 🟢 |
+| Q4 | 动作预判 — 浦肯野前馈编码提前2秒 | Long-term predictive encoding (eNeuro 2017) | 反射执行前预测成功率，低于阈值跳过 | 🟡 |
+| Q5 | 陈述性/程序性记忆分离 | The Evolution of Memory Systems (OUP 2016) | L3 KB 全局共享，L4 反射 per-bot | ✅ |
+| Q6 | 环境压缩 — 海马时空竞争编码 | Integration and competition (Neuron 2024) | `MetaContext` 差异编码，只存 delta | 🟢 |
+| Q7 | 错误归因 — ACC 区分行动错误(ERN) vs 计划错误(FRN) | Neural response to action and reward (Psychophysiology 2011) | `classifyFailure()` — 执行错重试，计划错重建 | 🔴 |
+| Q8 | 组块化 — 纹状体高频共现多步焊接为一步 | Basal Ganglia and Chunking (Neurobiol Learn Mem 1998) | 连续成功 N 次 → 多步序列焊接为一步 | 🟡 |
+| Q9 | 可适应遗忘 — 自适应遗忘防止过拟合 | N/A（工程原则） | dormant 堆积到阈值后永久归档 | 🟢 |
+| Q10 | 图式迁移 — mPFC 提取跨任务共同结构 | Schema-based active inference (arXiv 2026) | `craft()` 存 schema 不存 per-item 反射 | 🔴 |
+| Q11 | 努力折扣 — ACC 编码努力成本，区分资源型 vs 抵抗型 | Separate and overlapping brain areas (NeuroImage 2015) | `estimateEffort()` — 走路 vs 造新 vs 调 LLM | 🟡 |
+
+详见 [INTERNALIZATION.md](INTERNALIZATION.md) 的内化清单。
+
+---
+
+### 记忆分层与信息压缩
+
+生物记忆三级模型直接映射到系统信息生命周期：
+
+| 记忆类型 | 生物学特点 | 系统组件 | 压缩作用 |
+|---------|-----------|---------|---------|
+| **感觉记忆** | 海量、原始、短暂 | `SensorBuffer` (事件队列) | 只捕获事件增量，瞬间丢弃 99% 原始数据 |
+| **工作记忆** | 容量 7±2 组块，高能耗 | `MetaContext` + `MotivationEngine` | 显式限制活跃目标 ≤ 9 个；注意力即压缩 |
+| **长期记忆** | 容量近乎无限，低能耗 | `ConditionedReflex` + `KnowledgeBase` | 通过去重/泛化/休眠控制检索成本 |
+
+**信息流路径：**
+
+```
+感觉记忆 ─(增量过滤)→ 工作记忆 ─(固化和验证)→ 长期记忆
+                                  ↑                    │
+                                  └───(检索/提取)──────┘
+```
+
+**三个关键压缩点：**
+
+1. **感觉→工作：入口压缩**。`SensorBuffer` 只输出事件增量（方块改变、实体进入范围），不输出完整状态快照。
+2. **工作→长期：固化压缩**。只有被成功执行并验证过的动作序列（反射）才能进入长期库。验证状态机：`unvalidated` → 沙箱试跑 3 次 → `active`(3/3) 或 `dormant`(0/3)。
+3. **长期内部：去重压缩**。`ReflexGarbageCollector` (待实现) 定期扫描并合并可泛化的反射（例如"橡木→木板"和"云杉木→木板"合并为 `#log→木板`）；低频反射标记 dormant，不删除。
+
+**推论：**
+
+- **聪明 = 长期记忆中可检索的经巩固组块数量**（反射池 × 泛化质量）
+- **智慧 = 工作记忆的注意力分配策略**（`selectPerspective` 的精度）
+- 下一阶段的关键不是"存更多"，而是"存更少但更有用"——用泛化压缩实例数
+
+---
+
 > ## 🧬 未来计划：角色性格生成插件
 >
 > 玩家只需用自然语言描述一个角色——
@@ -275,6 +329,47 @@
 
 ---
 
+> ## 🏷️ 失败模式记忆（MUSE 启发）
+
+> 每个反射不再只存 `successRate` 标量，而是记录 `failureTags`：
+>
+> ```json
+> {
+>   "skillId": "reflex_craft_stone_pickaxe",
+>   "successRate": 0.92,
+>   "failureTags": [
+>     {"condition": "underwater", "count": 3},
+>     {"condition": "no_crafting_table_in_range", "count": 5}
+>   ]
+> }
+> ```
+>
+> **用处**：
+> - 匹配 `failureTags` → 相同条件重复出现→不走反射直接标记 PLANNING_ERROR
+> - LLM 重构时收到完整边界信息→生成更精确的替代反射
+> - 自动浮现每个反射的"失效边界"，随时间自动收敛
+
+---
+
+> ## ✅ 反射沙箱验证（MUSE 启发）
+
+> **当前问题**：LLM 产出→直接固化。零验证。
+>
+> **验证状态机**：
+>
+> ```
+> status: "unvalidated" → 沙箱试跑 3 次
+>   ├── 3/3 成功 → status: "active"
+>   ├── 1~2/3 成功 → 记录 failureTags，保持 "unvalidated"
+>   └── 0/3 成功 → status: "dormant"，触发 LLM 重新蒸馏
+> ```
+>
+> **沙箱实现**：不跑真 Minecraft，只验证步骤序列的执行逻辑是否自洽（前置条件是否可达、步骤顺序是否合理、依赖的 KB 条目是否存在）。
+>
+> 验证不通过→不入反射库。LLM 蒸馏质量通过验证通过率量化。
+
+---
+
 > ## 🧠 完整组件归属表
 
 > | 类型 | 区分内容 | 实现位置 | 学习方式 | LLM角色 | 层级 |
@@ -408,41 +503,31 @@
 ## 当前状态
 
 ```
-项目阶段: Phase 4.5 — MotivationEngine + LLM 门控
+项目阶段: Phase 6 — Multi-bot complete
 已完成:   TS 原型核心逻辑验证 (18 tests 通过)
-          P0 IdleBrain 零成本建议系统
-          P1 观察学习系统 (事件捕获+模式检测+固化)
-          P1.5 社交镜像系统 (多玩家贝叶斯+从众系数)
-          P2 优先级链重构 (安全→任务→Idle→社交镜像→非安全)
-          条件反射增强: 分类归纳(CategoryMapper) + 重试/废弃 + stats追踪
-          P3 条件反射系统升级 (原子写入/6层优先级/反射原子化/完成≠成功)
-           ✅ P4 子任务拆解 + Plan 支持
-           ✅ P-4 测试补齐 (58 tests, 0 failures, JUnit5 + Mockito)
-           ✅ P-1 BasicActionAdapter (12 原子动作统一适配器)
-           ✅ P-3 Plan 系统 (Plan + PlanManager + AI 异步集成)
-           ✅ P-9 IdleBrain "帮" 泛词误判修复
-           ✅ P-7 批量 API 评价归纳
-           ✅ P0 安全反射: critical() 致命检查 + 不中断任务流
-           ✅ 四模块目录对齐: cortex/hippocampus/amygdala/brainstem + 骨架独立
-           ✅ 先天反射系统: InnateReflexRegistry + JSON 驱动 + 脑干/杏仁核解耦
-           ✅ P5 BehaviorObserver 解耦 (BehaviorEventHandler + BehaviorStats)
-           ✅ Phase 1 MetaScheduler + BotContext (动态路由器)
-           ✅ Phase 2 OneShotAlarmSystem (一次预警系统)
-           ✅ Phase 2.5 HormonalSystem (激素系统)
-           ✅ P6 前额叶抑制控制 (InhibitoryControl)
-           ✅ DispatchReflex (调度反射权重学习)
-           ✅ 六层拦截器: Level 0(本能)+Level 1(预警)+Level 2(条件反射)+Level 3(模仿学习)+Level 4(自组织)+Level 5(本地规划)+Level 6(LLM兜底)
-           ✅ 三层信息传递: 基因层(DNA)+激素层(实时浓度)+反射层(经验固化) 闭环
-           ✅ Phase 3 LocalTaskDecomposer (本地规则拆解器 + Plan→Task 集成)
-           ✅ Phase 4 LocalChatHandler (本地聊天处理器 + 模板差异化)
-           ✅ Phase 4.5 MotivationEngine (动机通道并行竞争 + 玻尔兹曼选择 + 交叉抑制)
-           ✅ Phase 4.5 LLM 门控 (6条件合取: API配置/冷却/失败/标签/本地/抑制)
-           ✅ Phase 4.5 Curiosity 驱动 (指数衰减 30min半衰期 + 熟悉环境压制 + 动态阈值)
-           ✅ Phase 4.5 MetaContext 存根修补 (9个方法全部接入真实数据)
-           ✅ Phase 4.5 测试 (102 tests, 0 failures, 2 新增测试类)
-当前:     Phase 4.5 — MotivationEngine + LLM 门控 (已完成)
-目标:     Phase 5-7: 紧急程度/时间缩放 + 多假人 + 繁衍
-当前:     Phase 5 紧急程度 — UrgencyClassifier 已重构为连续信号 + 时间累积升级
+          P0-P4 全部完成
+          ✅ Phase 1-4.5 全部完成
+          ✅ Phase 5 紧急程度/时间缩放/自组织完成
+            - UrgencyClassifier 连续信号 + 时间累积升级
+            - TemporalScaler 响应速度 × urgency (0.5x–2.0x)
+            - CorrelationDetector L4 自组织层 (随机试验→模式固化)
+          ✅ Phase 6 多假人完成
+            - BotManager: Map<UUID, BotInstance> + spawn/despawn/tickAll
+            - 每个假人独立: ConditionedReflex/Hormonal/Motivation/Task/Memory/State
+            - 全局共享: KnowledgeBase/CategoryMapper/RecipeManager/DeepSeekClient
+            - /ai spawn <name> /ai despawn <name> /ai list /ai bot <name> <cmd>
+            - 出生位置: 玩家视线 + 3 格 + 地面查找
+            - 冷启动: 反射 JSON 复制 + 权重重置
+            - 社交观察学习: 附近 bot (≤30格) stw+0.03
+            - 聊天路由: @name → 精确 / 无 @ → 最近 / 执行前 IdleBrain 确认
+          ✅ 架构修复
+            - PlanManager 改为 per-bot: bots/{uuid}/plans/active_plan.json
+            - pendingChat 改为 per-bot: 存入 MetaContext
+            - BotController 仅当 BotManager 为空时运行 (互斥)
+            - onReflexSuccess 改为 UUID 查询
+            - updateNearbyPlayers 覆盖所有 BotManager bot + legacy bot
+当前:     Phase 6 — Multi-bot 稳定运行, 架构修复完成
+目标:     Phase 6-7: 多假人稳定 + 繁衍
 ```
 
 **当前唯一活动项目是 Fabric 模组** (`AIPlayerMod-1.21.1-Fabric/`)。
@@ -1304,8 +1389,8 @@ minecraft/ai_memory/
 | Phase 3 | LocalTaskDecomposer (本地规则拆解) | ✅ | KB模板→Plan→Task 集成 |
 | Phase 4 | LocalChatHandler + 模板差异化 | ✅ | 0 LLM 聊天 |
 | Phase 4.5 | MotivationEngine + LLM Gate + Curiosity Drive | ✅ | 玻尔兹曼视角选择 + 6条件门控 + 指数衰减驱动 |
-| Phase 5 | 紧急程度 + 时间缩放 + 自组织 | 🔴 部分 (连续 urgency + 时间累积已完成) | 动态调速 + 零成本探索 |
-| Phase 6 | 多假人 (BotSpawner Map + /ai spawn \<name\>) | ⬜ | 多假人共存 |
+| Phase 5 | 紧急程度 + 时间缩放 + 自组织 | ✅ | 动态调速 + 零成本探索 |
+| Phase 6 | 多假人 (BotManager Map + /ai spawn \<name\>) | ✅ | 多假人共存 |
 | Phase 7 | 繁衍模块 (三规则继承 + BotContext.reproduce) | ⬜ | 正态分布涌现 |
 
 - 🔴 = 当前正在实施

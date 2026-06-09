@@ -125,7 +125,6 @@ public class OneShotAlarmSystem {
                     onceLabeled, source, createdAt, triggerCount + 1, System.currentTimeMillis());
         }
 
-        @SuppressWarnings("unchecked")
         static AlarmEntry fromMap(Map<String, Object> map) {
             String alarmId = (String) map.get("alarmId");
             String matcher = (String) map.get("matcher");

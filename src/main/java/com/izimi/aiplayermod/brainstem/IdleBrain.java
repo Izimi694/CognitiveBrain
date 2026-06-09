@@ -3,7 +3,6 @@ package com.izimi.aiplayermod.brainstem;
 import com.izimi.aiplayermod.brainstem.skill.SkillManager;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
 import com.izimi.aiplayermod.cortex.task.TaskManager;
-import com.izimi.aiplayermod.AIPlayerMod;
 
 import java.util.*;
 

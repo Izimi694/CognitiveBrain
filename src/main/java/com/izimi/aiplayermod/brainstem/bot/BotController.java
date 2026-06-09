@@ -8,7 +8,6 @@ import com.izimi.aiplayermod.brainstem.scheduler.MetaScheduler;
 import com.izimi.aiplayermod.cortex.api.*;
 import com.izimi.aiplayermod.brainstem.IdleBrain;
 import com.izimi.aiplayermod.amygdala.NaiveBayesClassifier;
-import com.izimi.aiplayermod.cortex.planner.PlanManager;
 import com.izimi.aiplayermod.amygdala.ConditionedReflex;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
 import com.izimi.aiplayermod.cortex.inhibitor.InhibitoryControl;
@@ -20,13 +19,13 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.Vec3d;
 
+@SuppressWarnings("deprecation")
 public class BotController {
     private final BotSpawner botSpawner;
     private final TaskManager taskManager;
     private final TaskExecutor taskExecutor;
     private final StateManager stateManager;
     private final ConditionedReflex conditionedReflex;
-    private final AITaskPlanner aiTaskPlanner;
     private final AIChatHandler aiChatHandler;
     private final AIClient aiClient;
     private final IdleBrain idleBrain;
@@ -45,7 +44,7 @@ public class BotController {
     public BotController(BotSpawner botSpawner, TaskManager taskManager,
                          TaskExecutor taskExecutor, StateManager stateManager,
                          ConditionedReflex conditionedReflex,
-                         AITaskPlanner aiTaskPlanner, AIChatHandler aiChatHandler,
+                         AIChatHandler aiChatHandler,
                          AIClient aiClient, IdleBrain idleBrain,
                           NaiveBayesClassifier socialClassifier,
                           InnateReflexRegistry reflexRegistry,
@@ -55,7 +54,6 @@ public class BotController {
         this.taskExecutor = taskExecutor;
         this.stateManager = stateManager;
         this.conditionedReflex = conditionedReflex;
-        this.aiTaskPlanner = aiTaskPlanner;
         this.aiChatHandler = aiChatHandler;
         this.aiClient = aiClient;
         this.idleBrain = idleBrain;
@@ -257,9 +255,6 @@ public class BotController {
                 if (response.getMemoryNote() != null && !response.getMemoryNote().isEmpty()) {
                     var mem = AIPlayerMod.getMemoryManager();
                     if (mem != null) {
-                        var entry = new com.izimi.aiplayermod.hippocampus.MemoryEntry(
-                                "mem_chat_" + System.currentTimeMillis(),
-                                response.getMemoryNote());
                         mem.generateMemory(new com.izimi.aiplayermod.cortex.task.Task(
                                 "chat", "instant", response.getMemoryNote()));
                     }

@@ -3,8 +3,6 @@ package com.izimi.aiplayermod.brainstem.adapter;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.Map;
-
 public interface BasicActionAdapter {
 
     ActionResult moveTo(ServerPlayerEntity bot, BlockPos target);
@@ -26,6 +24,8 @@ public interface BasicActionAdapter {
     ActionResult closeWindow(ServerPlayerEntity bot);
 
     ActionResult clickSlot(ServerPlayerEntity bot, int slot, int button);
+
+    ActionResult craft(ServerPlayerEntity bot, String itemId);
 
     ActionResult chat(ServerPlayerEntity bot, String message);
 

@@ -3,19 +3,19 @@ package com.izimi.aiplayermod.brainstem.scheduler;
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.amygdala.DispatchReflex;
 import com.izimi.aiplayermod.amygdala.OneShotAlarmSystem;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.amygdala.learning.CorrelationDetector;
+import com.izimi.aiplayermod.brainstem.adapter.TemporalScaler;
 import com.izimi.aiplayermod.brainstem.innate.InnateReflex;
 import com.izimi.aiplayermod.brainstem.innate.InnateReflexRegistry;
 import com.izimi.aiplayermod.cortex.inhibitor.InhibitoryControl;
 import com.izimi.aiplayermod.cortex.chat.LocalChatHandler;
-import com.izimi.aiplayermod.cortex.planner.Plan;
 import com.izimi.aiplayermod.cortex.task.Task;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 public class MetaScheduler {
@@ -26,10 +26,17 @@ public class MetaScheduler {
 
     private final MotivationEngine motivationEngine;
     private final UrgencyClassifier urgencyClassifier;
+    private final TemporalScaler temporalScaler;
+    private CorrelationDetector correlationDetector;
 
     public MetaScheduler(MotivationEngine motivationEngine) {
         this.motivationEngine = motivationEngine;
         this.urgencyClassifier = new UrgencyClassifier();
+        this.temporalScaler = new TemporalScaler(this.urgencyClassifier);
+    }
+
+    public void setCorrelationDetector(CorrelationDetector cd) {
+        this.correlationDetector = cd;
     }
 
     private ProblemLabel labelProblem(MetaContext ctx, Perspective perspective) {
@@ -108,6 +115,8 @@ public class MetaScheduler {
 
         FlowLevel flow = getFlowAdjustment(ctx);
 
+        temporalScaler.update(ctx.hormones(), ctx.bot(), ctx.getTicksInCurrentLabel());
+
         DispatchReflex.DispatchAction action = null;
         if (ctx.dispatchReflex() != null) {
             action = ctx.dispatchReflex().match(label, flow);
@@ -147,11 +156,6 @@ public class MetaScheduler {
 
         ILocalPlanner lp = ctx.localPlanner();
         if (lp != null && lp.canHandle(ctx.lastPlayerMessage())) return false;
-
-        InhibitoryControl inhibitor = ctx.inhibitor();
-        if (inhibitor != null) {
-            return false;
-        }
 
         return true;
     }
@@ -228,13 +232,14 @@ public class MetaScheduler {
     private void dispatchReflexAction(ServerPlayerEntity bot, InnateReflex reflex) {
         var adapter = AIPlayerMod.getActionAdapter();
         if (adapter == null) return;
+        float speedMul = temporalScaler.getSpeed();
         switch (reflex.action().type()) {
-            case "flee" -> adapter.flee(bot, reflex.action().getDouble("speed", 0.3));
+            case "flee" -> adapter.flee(bot, reflex.action().getDouble("speed", 0.3) * speedMul);
             case "eat" -> adapter.eat(bot);
-            case "retreat" -> adapter.retreat(bot, reflex.action().getDouble("speed", 0.25));
-            case "avoidLava" -> adapter.avoidLava(bot, reflex.action().getDouble("speed", 0.2));
-            case "seekShelter" -> adapter.seekShelter(bot, reflex.action().getDouble("speed", 0.1));
-            case "collectItem" -> adapter.collectItem(bot, reflex.action().getDouble("speed", 0.15));
+            case "retreat" -> adapter.retreat(bot, reflex.action().getDouble("speed", 0.25) * speedMul);
+            case "avoidLava" -> adapter.avoidLava(bot, reflex.action().getDouble("speed", 0.2) * speedMul);
+            case "seekShelter" -> adapter.seekShelter(bot, reflex.action().getDouble("speed", 0.1) * speedMul);
+            case "collectItem" -> adapter.collectItem(bot, reflex.action().getDouble("speed", 0.15) * speedMul);
         }
     }
 
@@ -259,50 +264,51 @@ public class MetaScheduler {
                 return true;
             }
         }
+
+        if (correlationDetector != null) {
+            return correlationDetector.tryExplore(bot, ctx);
+        }
         return false;
     }
 
     private boolean executeCortexLocal(MetaContext ctx, ServerPlayerEntity bot) {
-        if (!AIPlayerMod.hasPendingChat()) return false;
-
-        String msg = AIPlayerMod.peekPendingChatMessage();
+        String msg = ctx.peekPendingChat();
+        if (msg == null) msg = AIPlayerMod.peekPendingChatMessage();
         if (msg == null) return false;
 
         ILocalPlanner planner = ctx.localPlanner();
 
         if (planner != null && planner.canHandle(msg)) {
-            var pc = AIPlayerMod.consumePendingChat();
-            if (pc != null) {
-                var response = planner.decompose(pc.message());
-                if (response != null && response.isAction()) {
-                    var planManager = ctx.planManager();
-                    if (planManager != null) {
-                        var plan = planManager.getActivePlan();
-                        if (plan != null && !plan.subSteps.isEmpty()) {
-                            ctx.taskManager().createTaskFromPlan(pc.message(), plan);
-                            AIPlayerMod.LOGGER.info("[MetaScheduler] CortexLocal 从Plan创建任务: {} → {}步",
-                                    pc.message(), plan.subSteps.size());
-                            return true;
-                        }
+            ctx.consumePendingChat();
+            AIPlayerMod.consumePendingChat();
+            var response = planner.decompose(msg);
+            if (response != null && response.isAction()) {
+                var planManager = ctx.planManager();
+                if (planManager != null) {
+                    var plan = planManager.getActivePlan();
+                    if (plan != null && !plan.subSteps.isEmpty()) {
+                        ctx.taskManager().createTaskFromPlan(msg, plan);
+                        AIPlayerMod.LOGGER.info("[MetaScheduler] CortexLocal 从Plan创建任务: {} → {}步",
+                                msg, plan.subSteps.size());
+                        return true;
                     }
-                    ctx.taskManager().createTask(pc.message());
-                    return true;
                 }
+                ctx.taskManager().createTask(msg);
+                return true;
             }
         }
 
         LocalChatHandler chatHandler = ctx.localChatHandler();
         if (chatHandler != null && chatHandler.canHandle(msg)) {
-            var pc = AIPlayerMod.consumePendingChat();
-            if (pc != null) {
-                UUID playerId = ctx.botId();
-                String response = chatHandler.getResponse(pc.message(), ctx.hormones(), playerId);
-                if (response != null) {
-                    bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response));
-                    AIPlayerMod.LOGGER.info("[MetaScheduler] CortexLocal 本地聊天: \"{}\" → \"{}\"",
-                            pc.message(), response);
-                    return true;
-                }
+            ctx.consumePendingChat();
+            AIPlayerMod.consumePendingChat();
+            UUID playerId = ctx.botId();
+            String response = chatHandler.getResponse(msg, ctx.hormones(), playerId);
+            if (response != null) {
+                bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response));
+                AIPlayerMod.LOGGER.info("[MetaScheduler] CortexLocal 本地聊天: \"{}\" → \"{}\"",
+                        msg, response);
+                return true;
             }
         }
 
@@ -313,15 +319,20 @@ public class MetaScheduler {
         var aiClient = AIPlayerMod.getAIClient();
         if (aiClient == null || !aiClient.isConfigured()) return false;
 
-        var pc = AIPlayerMod.consumePendingChat();
-        if (pc == null) return false;
+        String msg = ctx.consumePendingChat();
+        if (msg == null) {
+            var pc = AIPlayerMod.consumePendingChat();
+            if (pc == null) return false;
+            msg = pc.message();
+        }
 
         var aiChatHandler = AIPlayerMod.getAiChatHandler();
         if (aiChatHandler == null) return false;
 
         ctx.resetTickSinceLastLLM();
         try {
-            aiChatHandler.handleChat(pc.message(), ctx.stateManager().loadState(),
+            aiChatHandler.handleChat(msg,
+                    ctx.stateManager().loadState(),
                     ctx.taskManager().getActiveTask(),
                     ctx.memoryManager().getRecentMemories());
             ctx.setRecentLLMFailure(false);
@@ -342,6 +353,33 @@ public class MetaScheduler {
                 return true;
             }
         }
-        return false;
+
+        animateIdle(bot);
+        return true;
     }
+
+    private void animateIdle(ServerPlayerEntity bot) {
+        float speedMul = temporalScaler.getSpeed();
+        long tick = bot.age;
+        if (tick % 40 < 20) {
+            float yaw = bot.getYaw() + (float) (Math.sin(tick * 0.05) * 15);
+            bot.setYaw(yaw);
+            bot.setHeadYaw(yaw);
+        }
+        if (tick % Math.max(20, (int)(100 / speedMul)) == 0) {
+            var pos = bot.getPos();
+            double angle = Math.random() * Math.PI * 2;
+            double dist = (2.0 + Math.random() * 3.0) * speedMul;
+            var target = pos.add(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+            double dx = target.x - pos.x;
+            double dz = target.z - pos.z;
+            double len = Math.sqrt(dx * dx + dz * dz);
+            if (len > 0) {
+                bot.setVelocity(new Vec3d(dx / len * 0.15 * speedMul, 0.08, dz / len * 0.15 * speedMul));
+                bot.velocityModified = true;
+            }
+        }
+    }
+
+    public TemporalScaler getTemporalScaler() { return temporalScaler; }
 }

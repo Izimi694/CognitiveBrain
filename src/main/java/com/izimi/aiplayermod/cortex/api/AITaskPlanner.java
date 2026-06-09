@@ -4,7 +4,6 @@ import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.hippocampus.MemoryEntry;
 import com.izimi.aiplayermod.state.PlayerState;
 import com.izimi.aiplayermod.cortex.task.Task;
-import net.minecraft.server.network.ServerPlayerEntity;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;

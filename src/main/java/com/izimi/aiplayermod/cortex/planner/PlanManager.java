@@ -1,7 +1,6 @@
 package com.izimi.aiplayermod.cortex.planner;
 
 import com.izimi.aiplayermod.AIPlayerMod;
-import com.izimi.aiplayermod.cortex.api.AIClient;
 import com.izimi.aiplayermod.cortex.api.AITaskPlanner;
 import com.izimi.aiplayermod.cortex.task.Task;
 import com.izimi.aiplayermod.util.FileUtil;
@@ -9,14 +8,22 @@ import com.izimi.aiplayermod.util.JsonUtil;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.UUID;
 
 public class PlanManager {
 
     private Plan activePlan;
     private final AITaskPlanner aiTaskPlanner;
+    private final UUID botId;
 
+    // Legacy constructor (no UUID → global path)
     public PlanManager(AITaskPlanner aiTaskPlanner) {
+        this(aiTaskPlanner, null);
+    }
+
+    public PlanManager(AITaskPlanner aiTaskPlanner, UUID botId) {
         this.aiTaskPlanner = aiTaskPlanner;
+        this.botId = botId;
         this.activePlan = loadActivePlan();
     }
 
@@ -56,9 +63,9 @@ public class PlanManager {
         }
 
         aiTaskPlanner.planTask(goal,
-                AIPlayerMod.getStateManager() != null ? AIPlayerMod.getStateManager().loadState() : null,
+                botId != null ? AIPlayerMod.getStateManager(botId).loadState() : AIPlayerMod.getStateManager().loadState(),
                 null,
-                AIPlayerMod.getMemoryManager() != null ? AIPlayerMod.getMemoryManager().getRecentMemories() : null,
+                botId != null ? AIPlayerMod.getMemoryManager(botId).getRecentMemories() : AIPlayerMod.getMemoryManager().getRecentMemories(),
                 null);
 
         AIPlayerMod.LOGGER.info("[PlanManager] 已请求API计划富化: {}", goal);
@@ -118,7 +125,7 @@ public class PlanManager {
             activePlan.status = "cancelled";
             saveActivePlan();
 
-            Path backup = FileUtil.getPlansDir().resolve("last_plan_" + activePlan.taskId + ".json");
+            Path backup = getActivePlanPath().resolveSibling("last_plan_" + activePlan.taskId + ".json");
             saveTo(backup);
 
             AIPlayerMod.LOGGER.info("[PlanManager] 计划取消: {}", activePlan.goal);
@@ -144,12 +151,15 @@ public class PlanManager {
     }
 
     private Plan loadActivePlan() {
-        Map<String, Object> data = JsonUtil.readFromFileSafe(getActivePlanPath(), Map.class);
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(getActivePlanPath());
         if (data == null) return null;
         return Plan.fromMap(data);
     }
 
-    private static Path getActivePlanPath() {
+    private Path getActivePlanPath() {
+        if (botId != null) {
+            return FileUtil.getBotPlansDir(botId).resolve("active_plan.json");
+        }
         return FileUtil.getPlansDir().resolve("active_plan.json");
     }
 }

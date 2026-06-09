@@ -67,7 +67,7 @@ public class KnowledgeBase {
         Path path = FileUtil.getConfigDir().resolve("knowledge_base.json");
         Map<String, Object> data = null;
         if (Files.exists(path)) {
-            data = JsonUtil.readFromFileSafe(path, Map.class);
+            data = JsonUtil.readMapFromFileSafe(path);
         }
         if (data == null) {
             data = JsonUtil.fromJson(DEFAULT_JSON, Map.class);

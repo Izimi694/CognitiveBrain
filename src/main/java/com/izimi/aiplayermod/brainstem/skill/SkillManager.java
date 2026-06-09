@@ -9,7 +9,6 @@ import com.izimi.aiplayermod.brainstem.innate.MoveSkill;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 

@@ -2,7 +2,6 @@ package com.izimi.aiplayermod.amygdala.character;
 
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.amygdala.ConditionedReflex;
-import com.izimi.aiplayermod.cortex.api.AIClient;
 import com.izimi.aiplayermod.cortex.api.AIMessage;
 
 import java.util.ArrayList;

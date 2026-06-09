@@ -44,6 +44,7 @@ public class MetaContext {
     private final FamiliarityTracker familiarityTracker;
     private final ServerPlayerEntity bot;
 
+    private String pendingChatMessage;
     private String lastPlayerMessage = "";
     private int p3Cooldown = 0;
     private int tickSinceLastLLM = 0;
@@ -123,6 +124,15 @@ public class MetaContext {
             lastPlayerMessageTime = System.currentTimeMillis();
         }
     }
+
+    public boolean hasPendingChat() { return pendingChatMessage != null; }
+    public String peekPendingChat() { return pendingChatMessage; }
+    public String consumePendingChat() {
+        String msg = pendingChatMessage;
+        pendingChatMessage = null;
+        return msg;
+    }
+    public void setPendingChat(String message) { this.pendingChatMessage = message; }
 
     public int getP3Cooldown() { return p3Cooldown; }
     public void setP3Cooldown(int c) { this.p3Cooldown = c; }
@@ -235,6 +245,7 @@ public class MetaContext {
                 localChatHandler, planManager, socialObserver, familiarityTracker, newBot);
         ctx.p3Cooldown = this.p3Cooldown;
         ctx.lastPlayerMessage = this.lastPlayerMessage;
+        ctx.pendingChatMessage = this.pendingChatMessage;
         ctx.tickSinceLastLLM = this.tickSinceLastLLM;
         ctx.recentLLMFailure = this.recentLLMFailure;
         ctx.lastPlayerMessageTime = this.lastPlayerMessageTime;

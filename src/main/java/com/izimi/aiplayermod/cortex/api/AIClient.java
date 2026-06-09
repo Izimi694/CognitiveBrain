@@ -23,4 +23,6 @@ public interface AIClient {
     boolean testConnection();
 
     void setApiKey(String key);
+
+    void setApiModel(String model);
 }

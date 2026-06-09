@@ -1,7 +1,6 @@
 package com.izimi.aiplayermod.hippocampus.storage;
 
 import com.izimi.aiplayermod.hippocampus.MemoryEntry;
-import com.izimi.aiplayermod.util.FileUtil;
 import com.izimi.aiplayermod.util.JsonUtil;
 
 import java.io.IOException;

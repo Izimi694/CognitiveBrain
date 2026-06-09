@@ -1,6 +1,5 @@
 package com.izimi.aiplayermod.brainstem.innate;
 
-import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.brainstem.navigation.NavigationController;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
 import net.minecraft.server.network.ServerPlayerEntity;

@@ -18,8 +18,8 @@ public class TemporalScaler {
         this.classifier = classifier;
     }
 
-    public void update(HormonalSystem hormones, ServerPlayerEntity bot) {
-        UrgencyClassifier.UrgencyLabel label = classifier.classify(hormones, bot);
+    public void update(HormonalSystem hormones, ServerPlayerEntity bot, int ticksInState) {
+        UrgencyClassifier.UrgencyLabel label = classifier.classify(hormones, bot, ticksInState);
         lastLabel = label;
 
         switch (label) {

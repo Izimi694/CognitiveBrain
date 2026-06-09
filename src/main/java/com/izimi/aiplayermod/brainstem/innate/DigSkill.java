@@ -3,13 +3,9 @@ package com.izimi.aiplayermod.brainstem.innate;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
 import net.minecraft.block.BlockState;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-
 import java.util.Map;
 
 public class DigSkill extends Skill {
@@ -86,11 +82,6 @@ public class DigSkill extends Skill {
 
     private void equipBestTool(ServerWorld world, ServerPlayerEntity bot, BlockPos pos) {
         BlockState state = world.getBlockState(pos);
-        boolean isWood = state.isIn(net.minecraft.registry.tag.BlockTags.AXE_MINEABLE);
-        boolean isStone = state.isIn(net.minecraft.registry.tag.BlockTags.PICKAXE_MINEABLE);
-        boolean isDirt = state.isIn(net.minecraft.registry.tag.BlockTags.SHOVEL_MINEABLE);
-        boolean isLeaves = state.isIn(net.minecraft.registry.tag.BlockTags.HOE_MINEABLE);
-
         ItemStack bestTool = ItemStack.EMPTY;
         float bestSpeed = 0;
 

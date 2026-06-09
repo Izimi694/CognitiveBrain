@@ -17,6 +17,8 @@ import com.izimi.aiplayermod.brainstem.IdleBrain;
 import com.izimi.aiplayermod.amygdala.NaiveBayesClassifier;
 import com.izimi.aiplayermod.amygdala.SocialObserver;
 import com.izimi.aiplayermod.brainstem.bot.BotSpawner;
+import com.izimi.aiplayermod.brainstem.bot.BotManager;
+import com.izimi.aiplayermod.brainstem.bot.BotInstance;
 import com.izimi.aiplayermod.brainstem.bot.BotController;
 import com.izimi.aiplayermod.amygdala.character.BehaviorEventHandler;
 import com.izimi.aiplayermod.amygdala.character.BehaviorStats;
@@ -42,6 +44,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,6 +66,7 @@ public class AIPlayerMod implements ModInitializer {
     private static ConditionedReflex conditionedReflex;
     private static StateManager stateManager;
     private static BotSpawner botSpawner;
+    private static BotManager botManager;
     private static BotController botController;
     private static BehaviorEventHandler behaviorEventHandler;
     private static BehaviorStats behaviorStats;
@@ -120,6 +124,7 @@ public class AIPlayerMod implements ModInitializer {
         LOGGER.info("[AI Player] KnowledgeBase + LocalTaskDecomposer + LocalChatHandler 已初始化 ({} 条知识)", knowledgeBase.allKeys().size());
 
         botSpawner = new BotSpawner();
+        botManager = new BotManager();
         stateManager = new StateManager();
         memoryManager = new MemoryManager(config);
         memoryQuery = new MemoryQuery(memoryManager);
@@ -137,7 +142,7 @@ public class AIPlayerMod implements ModInitializer {
         LOGGER.info("[AI Player] 先天反射注册表已初始化, {} 个反射", reflexRegistry.size());
         actionAdapter = new MinecraftActionAdapter();
         conditionedReflex = new ConditionedReflex(skillManager, config, actionAdapter);
-        taskExecutor = new TaskExecutor(taskManager, skillManager, stateManager, executionLogger);
+        taskExecutor = new TaskExecutor(taskManager, skillManager, executionLogger);
         behaviorStats = new BehaviorStats();
         behaviorEventHandler = new BehaviorEventHandler(behaviorStats);
         idleBrain = new IdleBrain(taskManager, skillManager);
@@ -150,7 +155,7 @@ public class AIPlayerMod implements ModInitializer {
         inhibitor = new InhibitoryControl();
 
         botController = new BotController(botSpawner, taskManager, taskExecutor, stateManager,
-                conditionedReflex, aiTaskPlanner, aiChatHandler, aiClient, idleBrain,
+                conditionedReflex, aiChatHandler, aiClient, idleBrain,
                 socialClassifier, reflexRegistry, inhibitor);
 
         MotivationEngine motivationEngine = new MotivationEngine();
@@ -179,6 +184,11 @@ public class AIPlayerMod implements ModInitializer {
                 null
         );
         botController.setMetaScheduler(metaScheduler, metaContext);
+
+        var correlationDetector = new com.izimi.aiplayermod.amygdala.learning.CorrelationDetector(
+                skillManager, actionAdapter);
+        metaScheduler.setCorrelationDetector(correlationDetector);
+
         LOGGER.info("[AI Player] MetaScheduler 已初始化 (MotivationEngine + LLM Gate)");
 
         learningSystem = new LearningSystem(conditionedReflex, skillManager);
@@ -198,7 +208,10 @@ public class AIPlayerMod implements ModInitializer {
         });
 
         ServerTickEvents.START_SERVER_TICK.register(server -> {
-            if (botController != null) {
+            if (botManager != null) {
+                botManager.tickAll(server);
+            }
+            if (botController != null && (botManager == null || botManager.isEmpty())) {
                 botController.onTick(server);
             }
             if (evaluationCycle != null) {
@@ -212,49 +225,86 @@ public class AIPlayerMod implements ModInitializer {
         ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) -> {
             if (sender != null) {
                 String content = message.getSignedContent();
-                if (content != null && !content.startsWith("/")) {
-                    if (idleBrain != null) {
-                        IdleBrain.IdleResponse response = idleBrain.handlePlayerChat(content);
-                        switch (response.type()) {
+                if (content == null || content.startsWith("/")) return;
+
+                // Step 1: Check @bot_name routing
+                if (content.startsWith("@")) {
+                    int spaceIdx = content.indexOf(' ');
+                    String namePart = spaceIdx > 0 ? content.substring(1, spaceIdx) : content.substring(1);
+                    String msgBody = spaceIdx > 0 ? content.substring(spaceIdx + 1) : "";
+                    BotInstance target = botManager != null ? botManager.getByName(namePart) : null;
+                    if (target != null && target.isSpawned()) {
+                        target.sendMessage("§7收到来自 " + sender.getName().getString() + " 的指令");
+                        routeChatToBot(target, sender, msgBody);
+                        return;
+                    }
+                }
+
+                // Step 2: Try IdleBrain on nearest bot
+                if (botManager != null && !botManager.isEmpty()) {
+                    BotInstance nearest = null;
+                    String msgBody = content;
+                    // Strip leading @ if present (but we already checked above)
+                    if (sender != null && botManager != null) {
+                        nearest = botManager.getNearest(sender);
+                    }
+
+                    if (nearest != null) {
+                        var idleResponse = nearest.getIdleBrain().handlePlayerChat(msgBody);
+                        switch (idleResponse.type()) {
                             case AFFIRMATIVE:
-                                taskManager.createTask(response.taskGoal());
-                                if (botController != null) {
-                                    var bot = botSpawner.getBotEntity();
-                                    if (bot != null) {
-                                        bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response.message()));
-                                    }
-                                }
+                                nearest.getTaskManager().createTask(idleResponse.taskGoal());
+                                nearest.sendMessage(idleResponse.message());
                                 return;
                             case NEGATIVE:
-                                if (botController != null) {
-                                    var bot = botSpawner.getBotEntity();
-                                    if (bot != null) {
-                                        bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response.message()));
-                                    }
-                                }
+                                nearest.sendMessage(idleResponse.message());
                                 return;
                             case IRRELEVANT:
                                 break;
                         }
                     }
-
-                    if (evaluationCycle != null) {
-                        evaluationCycle.checkMessage(content);
+                } else if (idleBrain != null) {
+                    // Legacy single-bot path
+                    IdleBrain.IdleResponse response = idleBrain.handlePlayerChat(content);
+                    switch (response.type()) {
+                        case AFFIRMATIVE:
+                            taskManager.createTask(response.taskGoal());
+                            if (botController != null) {
+                                var bot = botSpawner.getBotEntity();
+                                if (bot != null) {
+                                    bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response.message()));
+                                }
+                            }
+                            return;
+                        case NEGATIVE:
+                            if (botController != null) {
+                                var bot = botSpawner.getBotEntity();
+                                if (bot != null) {
+                                    bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response.message()));
+                                }
+                            }
+                            return;
+                        case IRRELEVANT:
+                            break;
                     }
+                }
 
+                // Step 3: Evaluation check
+                if (evaluationCycle != null) {
+                    evaluationCycle.checkMessage(content);
+                }
+
+                // Step 4: Route to nearest bot for LLM processing
+                BotInstance chatTarget = null;
+                if (botManager != null && sender != null) {
+                    chatTarget = botManager.getNearest(sender);
+                }
+
+                if (chatTarget != null) {
+                    chatTarget.getMetaContext().setPendingChat(content);
+                } else {
                     pendingChat = new PendingChat(content, "", "", "");
                     pendingChatTime = System.currentTimeMillis();
-
-                    if (aiClient.isConfigured()) {
-                        var state = stateManager.loadState();
-                        var task = taskManager.getActiveTask();
-                        var mems = memoryManager.getRecentMemories();
-                        pendingChat = new PendingChat(content,
-                                state != null ? state.toString() : "",
-                                task != null ? task.getGoal() : "",
-                                mems != null ? mems.toString() : "");
-                        pendingChatTime = System.currentTimeMillis();
-                    }
                 }
             }
         });
@@ -262,22 +312,42 @@ public class AIPlayerMod implements ModInitializer {
         LOGGER.info("[AI Player] 初始化完成");
     }
 
+    private static void routeChatToBot(BotInstance bot, ServerPlayerEntity sender, String message) {
+        if (message == null || message.isEmpty()) return;
+        bot.getTaskManager().createTask(message);
+        bot.sendMessage("§7收到: " + message);
+    }
+
+    public static void onReflexSuccess(ServerPlayerEntity bot, String skillId) {
+        if (bot == null || botManager == null) return;
+        String category;
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(bot.getUuid());
+            category = inst != null ? inst.getConditionedReflex().getReflexCategoryPublic(skillId) : null;
+        } else {
+            category = conditionedReflex != null ? conditionedReflex.getReflexCategoryPublic(skillId) : null;
+        }
+        if (category == null) return;
+        botManager.notifyReflexSuccess(bot, category);
+    }
+
     public static ModConfig getConfig() { return config; }
-    public static TaskManager getTaskManager() { return taskManager; }
-    public static MemoryManager getMemoryManager() { return memoryManager; }
-    public static BotSpawner getBotSpawner() { return botSpawner; }
+    @Deprecated public static TaskManager getTaskManager() { return taskManager; }
+    @Deprecated public static MemoryManager getMemoryManager() { return memoryManager; }
+    @Deprecated public static BotSpawner getBotSpawner() { return botSpawner; }
+    public static BotManager getBotManager() { return botManager; }
     public static SkillManager getSkillManager() { return skillManager; }
-    public static StateManager getStateManager() { return stateManager; }
+    @Deprecated public static StateManager getStateManager() { return stateManager; }
     public static ExecutionLogger getExecutionLogger() { return executionLogger; }
-    public static BotController getBotController() { return botController; }
-    public static ConditionedReflex getConditionedReflex() { return conditionedReflex; }
+    @Deprecated public static BotController getBotController() { return botController; }
+    @Deprecated public static ConditionedReflex getConditionedReflex() { return conditionedReflex; }
     public static MemoryQuery getMemoryQuery() { return memoryQuery; }
     public static AIClient getAIClient() { return aiClient; }
     public static AITaskPlanner getAiTaskPlanner() { return aiTaskPlanner; }
     public static AIChatHandler getAiChatHandler() { return aiChatHandler; }
     public static AIMemoryGenerator getAiMemoryGenerator() { return aiMemoryGenerator; }
-    public static IdleBrain getIdleBrain() { return idleBrain; }
-    public static LearningSystem getLearningSystem() { return learningSystem; }
+    @Deprecated public static IdleBrain getIdleBrain() { return idleBrain; }
+    @Deprecated public static LearningSystem getLearningSystem() { return learningSystem; }
     public static FamiliarityTracker getFamiliarityTracker() { return familiarityTracker; }
     public static SocialObserver getSocialObserver() { return socialObserver; }
     public static ThresholdConfig getThresholdConfig() { return thresholdConfig; }
@@ -289,6 +359,48 @@ public class AIPlayerMod implements ModInitializer {
     public static BehaviorStats getBehaviorStats() { return behaviorStats; }
     public static KnowledgeBase getKnowledgeBase() { return knowledgeBase; }
     public static LocalTaskDecomposer getLocalTaskDecomposer() { return localTaskDecomposer; }
+    public static LocalChatHandler getLocalChatHandler() { return localChatHandler; }
+
+    // UUID-based overloads — route through BotManager
+    public static ConditionedReflex getConditionedReflex(UUID botId) {
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(botId);
+            if (inst != null) return inst.getConditionedReflex();
+        }
+        return conditionedReflex;
+    }
+
+    public static TaskManager getTaskManager(UUID botId) {
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(botId);
+            if (inst != null) return inst.getTaskManager();
+        }
+        return taskManager;
+    }
+
+    public static StateManager getStateManager(UUID botId) {
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(botId);
+            if (inst != null) return inst.getStateManager();
+        }
+        return stateManager;
+    }
+
+    public static MemoryManager getMemoryManager(UUID botId) {
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(botId);
+            if (inst != null) return inst.getMemoryManager();
+        }
+        return memoryManager;
+    }
+
+    public static HormonalSystem getHormonalSystem(UUID botId) {
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(botId);
+            if (inst != null) return inst.getHormonalSystem();
+        }
+        return null;
+    }
 
     public static boolean hasPendingChat(double timeoutSecs) {
         if (pendingChat == null) return false;
@@ -312,23 +424,43 @@ public class AIPlayerMod implements ModInitializer {
     }
 
     private static void updateNearbyPlayers(MinecraftServer server) {
-        if (socialObserver == null || botSpawner == null || !botSpawner.isSpawned()) return;
+        if (socialObserver == null) return;
 
-        var bot = botSpawner.getBotEntity();
-        if (bot == null) return;
-
-        var world = bot.getServerWorld();
-        var botPos = bot.getBlockPos();
-
-        List<String> nearby = new ArrayList<>();
-        for (var player : server.getPlayerManager().getPlayerList()) {
-            if (player == bot) continue;
-            if (player.getServerWorld() != world) continue;
-            if (player.getBlockPos().getSquaredDistance(botPos) <= 900) { // 30 blocks
-                nearby.add(player.getName().getString());
+        // Update for each BotManager bot
+        if (botManager != null) {
+            for (BotInstance inst : botManager.getAll()) {
+                if (!inst.isSpawned()) continue;
+                var bot = inst.asEntity();
+                if (bot == null) continue;
+                var world = bot.getServerWorld();
+                var botPos = bot.getBlockPos();
+                List<String> nearby = new ArrayList<>();
+                for (var player : server.getPlayerManager().getPlayerList()) {
+                    if (player == bot) continue;
+                    if (player.getServerWorld() != world) continue;
+                    if (player.getBlockPos().getSquaredDistance(botPos) <= 900) {
+                        nearby.add(player.getName().getString());
+                    }
+                }
+                socialObserver.markNearbyPlayers(nearby);
             }
         }
 
-        socialObserver.markNearbyPlayers(nearby);
+        // Also update for legacy bot
+        if (botSpawner != null && botSpawner.isSpawned()) {
+            var bot = botSpawner.getBotEntity();
+            if (bot == null) return;
+            var world = bot.getServerWorld();
+            var botPos = bot.getBlockPos();
+            List<String> nearby = new ArrayList<>();
+            for (var player : server.getPlayerManager().getPlayerList()) {
+                if (player == bot) continue;
+                if (player.getServerWorld() != world) continue;
+                if (player.getBlockPos().getSquaredDistance(botPos) <= 900) {
+                    nearby.add(player.getName().getString());
+                }
+            }
+            socialObserver.markNearbyPlayers(nearby);
+        }
     }
 }

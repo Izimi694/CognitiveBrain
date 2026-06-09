@@ -4,7 +4,6 @@ import com.izimi.aiplayermod.brainstem.adapter.ActionResult;
 import com.izimi.aiplayermod.brainstem.adapter.BasicActionAdapter;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
 import com.izimi.aiplayermod.brainstem.skill.SkillManager;
-import com.izimi.aiplayermod.brainstem.skill.Skill.SkillResult;
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.config.ModConfig;
 import com.izimi.aiplayermod.amygdala.learning.CategoryMapper;
@@ -37,6 +36,7 @@ public class ConditionedReflex {
     private final ModConfig config;
     private final BasicActionAdapter actionAdapter;
     private final BotParams botParams;
+    private final UUID botId;
 
     private final Map<String, List<Double>> actionHistory = new HashMap<>();
     private int actionCount = 0;
@@ -45,10 +45,23 @@ public class ConditionedReflex {
     private int recentSuccessCount = 0;
 
     public ConditionedReflex(SkillManager skillManager, ModConfig config, BasicActionAdapter actionAdapter) {
+        this(skillManager, config, actionAdapter, null);
+    }
+
+    public ConditionedReflex(SkillManager skillManager, ModConfig config, BasicActionAdapter actionAdapter, UUID botId) {
         this.skillManager = skillManager;
         this.config = config;
         this.actionAdapter = actionAdapter;
-        this.botParams = BotParams.load();
+        this.botId = botId;
+        this.botParams = botId != null ? BotParams.generate() : BotParams.load();
+    }
+
+    private Path conditionedDir() {
+        return botId != null ? FileUtil.getBotConditionedDir(botId) : FileUtil.getConditionedDir();
+    }
+
+    private Path archivedDir() {
+        return conditionedDir().resolve("archived");
     }
 
     public Skill match(Task task) {
@@ -80,8 +93,8 @@ public class ConditionedReflex {
             Skill skill = entry.getValue();
             if (!"conditioned".equals(skill.getType())) continue;
 
-            Path reflexPath = FileUtil.getConditionedDir().resolve(skill.getSkillId() + ".json");
-            Map<String, Object> data = JsonUtil.readFromFileSafe(reflexPath, Map.class);
+            Path reflexPath = conditionedDir().resolve(skill.getSkillId() + ".json");
+            Map<String, Object> data = JsonUtil.readMapFromFileSafe(reflexPath);
             if (data == null) continue;
 
             String status = (String) data.getOrDefault("status", "healthy");
@@ -122,8 +135,8 @@ public class ConditionedReflex {
         Candidate best = candidates.get(0);
 
         if (best.atomIndex() >= 0) {
-            Path reflexPath = FileUtil.getConditionedDir().resolve(best.skill().getSkillId() + ".json");
-            Map<String, Object> data = JsonUtil.readFromFileSafe(reflexPath, Map.class);
+            Path reflexPath = conditionedDir().resolve(best.skill().getSkillId() + ".json");
+            Map<String, Object> data = JsonUtil.readMapFromFileSafe(reflexPath);
             if (data != null) {
                 data.put("currentAtomIndex", best.atomIndex());
                 JsonUtil.writeToFileSafeAtomic(reflexPath, data);
@@ -268,11 +281,7 @@ public class ConditionedReflex {
             return false;
         }
 
-        if ("equipItem".equals(action) || atomTarget.startsWith("equip_")) {
-            return true;
-        }
-
-        return false;
+        return "equipItem".equals(action) || atomTarget.startsWith("equip_");
     }
 
     private List<String> extractTargets(ObservedSequence sequence) {
@@ -313,6 +322,26 @@ public class ConditionedReflex {
         return CategoryMapper.getCategory(action, target);
     }
 
+    public static void resetReflexWeights(Path reflexPath) {
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(reflexPath);
+        if (data == null) return;
+        data.put("shortTermWeight", DEFAULT_WEIGHT);
+        data.put("longTermBaseline", DEFAULT_WEIGHT);
+        data.put("executionCount", 0);
+        data.put("successRate", 0.0);
+        data.put("proficiency", 0.1);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> atoms = (List<Map<String, Object>>) data.get("atoms");
+        if (atoms != null) {
+            for (Map<String, Object> atom : atoms) {
+                atom.put("executionCount", 0);
+                atom.put("successRate", 0.0);
+                atom.put("proficiency", 0.1);
+            }
+        }
+        JsonUtil.writeToFileSafeAtomic(reflexPath, data);
+    }
+
     public void recordAction(String skillId, double effectiveness) {
         actionHistory.computeIfAbsent(skillId, k -> new ArrayList<>()).add(effectiveness);
         actionCount++;
@@ -327,8 +356,8 @@ public class ConditionedReflex {
         if (!(reflex instanceof ConditionedSkill)) return;
 
         String skillId = reflex.getSkillId();
-        Path reflexPath = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(reflexPath, Map.class);
+        Path reflexPath = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(reflexPath);
         if (data == null) return;
 
         @SuppressWarnings("unchecked")
@@ -349,7 +378,7 @@ public class ConditionedReflex {
 
             String action = (String) atom.get("action");
             String target = (String) atom.get("target");
-            ActionResult adapterResult = dispatchAction(action, target, bot);
+            ActionResult adapterResult = dispatchAction(action, target, atom, bot);
 
             if (adapterResult != null) {
                 result = new Skill.SkillResult(
@@ -383,10 +412,13 @@ public class ConditionedReflex {
             reinforce(data, delta);
         }
 
+        if (result == null) return;
+
         updateReflexStats(skillId, result.success(), result.effectiveness());
 
         if (result.success()) {
             AIPlayerMod.LOGGER.info("[ConditionedReflex] 成功: {}", skillId);
+            AIPlayerMod.onReflexSuccess(bot, skillId);
         } else {
             handleReflexFailure(skillId, bot, atoms, atomIdx);
         }
@@ -397,8 +429,8 @@ public class ConditionedReflex {
     public record ReflexState(int executionCount, double successRate, ReflexHealth health) {}
 
     private void updateReflexStats(String skillId, boolean success, double effectiveness) {
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return;
 
         int count = ((Number) data.getOrDefault("executionCount", 0)).intValue() + 1;
@@ -444,11 +476,10 @@ public class ConditionedReflex {
         JsonUtil.writeToFileSafeAtomic(path, data);
     }
 
-    @SuppressWarnings("unchecked")
     private void handleReflexFailure(String skillId, ServerPlayerEntity bot,
                                      List<Map<String, Object>> atoms, int atomIdx) {
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return;
 
         int count = ((Number) data.getOrDefault("executionCount", 0)).intValue();
@@ -503,8 +534,8 @@ public class ConditionedReflex {
     }
 
     public ReflexState getReflexState(String skillId) {
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return new ReflexState(0, 0.0, ReflexHealth.HEALTHY);
 
         int count = ((Number) data.getOrDefault("executionCount", 0)).intValue();
@@ -573,16 +604,17 @@ public class ConditionedReflex {
                 "target", category
         ));
 
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
+        Path path = conditionedDir().resolve(skillId + ".json");
         JsonUtil.writeToFileSafeAtomic(path, reflexData);
 
         AIPlayerMod.LOGGER.info("[ConditionedReflex] 条件反射已固化: {} (category={}, 观察{}次, proficiency={})",
                 skillId, category, sequence.occurrences(), String.format("%.2f", sequence.proficiency()));
     }
 
+    @SuppressWarnings("deprecation")
     public void incrementProficiency(String skillId) {
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return;
 
         double proficiency = ((Number) data.getOrDefault("proficiency", 0.3)).doubleValue();
@@ -615,8 +647,8 @@ public class ConditionedReflex {
     }
 
     public void reinforce(String skillId, double delta) {
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return;
         reinforce(data, delta);
         JsonUtil.writeToFileSafeAtomic(path, data);
@@ -645,8 +677,8 @@ public class ConditionedReflex {
 
     public String getReflexContext(String skillId) {
         if (skillId == null) return null;
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return null;
         String category = (String) data.getOrDefault("category", "");
         String target = (String) data.getOrDefault("target", "");
@@ -666,12 +698,12 @@ public class ConditionedReflex {
     public double getHighestProficiency() {
         double max = 0;
         try {
-            var dir = FileUtil.getConditionedDir();
+            var dir = conditionedDir();
             if (!java.nio.file.Files.exists(dir)) return 0;
             try (var stream = java.nio.file.Files.list(dir)) {
                 for (var path : stream.toList()) {
                     if (!path.toString().endsWith(".json")) continue;
-                    Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+                    Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
                     if (data != null) {
                         double ew = effectiveWeight(data);
                         if (ew > max) max = ew;
@@ -684,6 +716,10 @@ public class ConditionedReflex {
         return max;
     }
 
+    public Path getStoragePath() {
+        return conditionedDir();
+    }
+
     public int getConsecutiveFailures() {
         return consecutiveFailures;
     }
@@ -693,8 +729,8 @@ public class ConditionedReflex {
     }
 
     public void moveToArchived(String skillId, Map<String, Object> data) {
-        Path src = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Path dst = FileUtil.getArchivedDir().resolve(skillId + ".json");
+        Path src = conditionedDir().resolve(skillId + ".json");
+        Path dst = archivedDir().resolve(skillId + ".json");
         JsonUtil.writeToFileSafeAtomic(dst, data);
         try {
             java.nio.file.Files.deleteIfExists(src);
@@ -704,15 +740,15 @@ public class ConditionedReflex {
     }
 
     public boolean tryReactivate(String skillId) {
-        Path archivedPath = FileUtil.getArchivedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(archivedPath, Map.class);
+        Path archivedPath = archivedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(archivedPath);
         if (data == null) return false;
         data.put("status", "healthy");
         data.put("executionCount", 0);
         data.put("successRate", 0.0);
         data.put("shortTermWeight", DEFAULT_WEIGHT);
         data.put("longTermBaseline", DEFAULT_WEIGHT);
-        Path activePath = FileUtil.getConditionedDir().resolve(skillId + ".json");
+        Path activePath = conditionedDir().resolve(skillId + ".json");
         JsonUtil.writeToFileSafeAtomic(activePath, data);
         try {
             java.nio.file.Files.deleteIfExists(archivedPath);
@@ -764,10 +800,35 @@ public class ConditionedReflex {
     }
 
     private String getReflexCategory(String skillId) {
-        Path path = FileUtil.getConditionedDir().resolve(skillId + ".json");
-        Map<String, Object> data = JsonUtil.readFromFileSafe(path, Map.class);
+        Path path = conditionedDir().resolve(skillId + ".json");
+        Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return null;
         return (String) data.getOrDefault("category", null);
+    }
+
+    public String getReflexCategoryPublic(String skillId) {
+        return getReflexCategory(skillId);
+    }
+
+    public void observePeerSuccess(String category) {
+        if (category == null) return;
+        int count = 0;
+        for (String id : skillManager.getSkills().keySet()) {
+            String cat = getReflexCategory(id);
+            if (category.equals(cat)) {
+                Path path = conditionedDir().resolve(id + ".json");
+                Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
+                if (data == null) continue;
+                double stw = ((Number) data.getOrDefault("shortTermWeight", DEFAULT_WEIGHT)).doubleValue();
+                stw = Math.min(WEIGHT_MAX, stw + 0.03);
+                data.put("shortTermWeight", stw);
+                JsonUtil.writeToFileSafeAtomic(path, data);
+                count++;
+            }
+        }
+        if (count > 0) {
+            AIPlayerMod.LOGGER.debug("[ConditionedReflex] 社交观察学习: category={} 提升 {} 个反射", category, count);
+        }
     }
 
     public void reinforceWithSpill(String skillId, double delta) {
@@ -811,7 +872,7 @@ public class ConditionedReflex {
         actionHistory.clear();
     }
 
-    private ActionResult dispatchAction(String action, String target, ServerPlayerEntity bot) {
+    private ActionResult dispatchAction(String action, String target, Map<String, Object> atom, ServerPlayerEntity bot) {
         if (actionAdapter == null || bot == null) return null;
 
         var world = bot.getServerWorld();
@@ -838,7 +899,14 @@ public class ConditionedReflex {
                 yield actionAdapter.openBlock(bot, openPos != null ? openPos : bot.getBlockPos());
             }
             case "closeWindow" -> actionAdapter.closeWindow(bot);
-            case "clickSlot" -> actionAdapter.clickSlot(bot, 0, 0);
+            case "clickSlot" -> {
+                int slot = atom != null && atom.containsKey("slot")
+                        ? ((Number) atom.getOrDefault("slot", 0)).intValue() : 0;
+                int button = atom != null && atom.containsKey("button")
+                        ? ((Number) atom.getOrDefault("button", 0)).intValue() : 0;
+                yield actionAdapter.clickSlot(bot, slot, button);
+            }
+            case "craft" -> actionAdapter.craft(bot, target != null ? target : "");
             case "chat" -> actionAdapter.chat(bot, target != null ? target : "");
             case "jump" -> actionAdapter.jump(bot);
             default -> null;

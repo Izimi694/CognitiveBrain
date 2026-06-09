@@ -56,6 +56,11 @@ public class DeepSeekClient implements AIClient {
     }
 
     @Override
+    public void setApiModel(String model) {
+        config.setApiModel(model);
+    }
+
+    @Override
     public CompletableFuture<AIResponse> planTask(String playerMessage, PlayerState state,
                                                    Task activeTask, List<MemoryEntry> recentMemories,
                                                    Map<String, Double> preferences) {

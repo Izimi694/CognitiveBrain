@@ -3,7 +3,6 @@ package com.izimi.aiplayermod.cortex.chat;
 import com.izimi.aiplayermod.brainstem.HormonalSystem;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 

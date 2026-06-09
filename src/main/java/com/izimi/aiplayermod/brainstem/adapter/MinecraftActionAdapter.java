@@ -8,12 +8,19 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.recipe.CraftingRecipe;
+import net.minecraft.recipe.Ingredient;
+import net.minecraft.recipe.RecipeType;
+import net.minecraft.recipe.ShapedRecipe;
+import net.minecraft.recipe.RecipeEntry;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.ScreenHandler;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -22,6 +29,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MinecraftActionAdapter implements BasicActionAdapter {
+
+    // Container slot layout constants (handler slot indices)
+    // CraftingScreenHandler: 46 slots total
+    private static final int CT_RESULT = 0;
+    private static final int CT_GRID_START = 1;
+    private static final int CT_GRID_END = 9;        // 3x3 = 9 slots
+    private static final int CT_GRID_WIDTH = 3;
+    private static final int CT_INV_START = 10;       // player main 27 slots
+    private static final int CT_HOTBAR_START = 37;    // hotbar 9 slots
+
+    // PlayerScreenHandler (2x2 inventory crafting): 41 slots total
+    private static final int INV_RESULT = 0;
+    private static final int INV_GRID_START = 1;
+    private static final int INV_GRID_END = 4;        // 2x2 = 4 slots
+    private static final int INV_GRID_WIDTH = 2;
+    private static final int INV_INV_START = 5;       // player main 27 slots
+    private static final int INV_HOTBAR_START = 32;   // hotbar 9 slots
 
     private BlockPos currentDigTarget = null;
     private int digBreakingTicks = 0;
@@ -131,40 +155,19 @@ public class MinecraftActionAdapter implements BasicActionAdapter {
             return ActionResult.unable("附近没有" + (entityName != null ? entityName : "攻击目标"));
         }
 
+        lookAtEntity(bot, target);
+
         double dist = bot.squaredDistanceTo(target);
         if (dist > 25.0) {
             Vec3d dir = target.getPos().subtract(bot.getPos()).normalize().multiply(0.15);
             bot.setVelocity(new Vec3d(dir.x, 0.08, dir.z));
             bot.velocityModified = true;
-        double px = target.getX();
-        double py = target.getEyeY();
-        double pz = target.getZ();
-        double dx = px - bot.getX();
-        double dy = py - (bot.getY() + bot.getStandingEyeHeight());
-        double dz = pz - bot.getZ();
-        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        float pitch = (float) Math.toDegrees(-Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
-        bot.setYaw(yaw);
-        bot.setHeadYaw(yaw);
-        bot.setPitch(pitch);
-        return ActionResult.partial(0.4, "追击中");
-    }
+            return ActionResult.partial(0.4, "追击中");
+        }
 
-    double px2 = target.getX();
-    double py2 = target.getEyeY();
-    double pz2 = target.getZ();
-    double dx2 = px2 - bot.getX();
-    double dy2 = py2 - (bot.getY() + bot.getStandingEyeHeight());
-    double dz2 = pz2 - bot.getZ();
-    float yaw2 = (float) Math.toDegrees(Math.atan2(-dx2, dz2));
-    float pitch2 = (float) Math.toDegrees(-Math.atan2(dy2, Math.sqrt(dx2 * dx2 + dz2 * dz2)));
-    bot.setYaw(yaw2);
-    bot.setHeadYaw(yaw2);
-    bot.setPitch(pitch2);
-    bot.swingHand(Hand.MAIN_HAND);
-    bot.attack(target);
-
-    return ActionResult.partial(0.7, "攻击");
+        bot.swingHand(Hand.MAIN_HAND);
+        bot.attack(target);
+        return ActionResult.partial(0.7, "攻击");
     }
 
     @Override
@@ -385,6 +388,172 @@ public class MinecraftActionAdapter implements BasicActionAdapter {
         bot.setVelocity(dir.multiply(speed));
         bot.velocityModified = true;
         return ActionResult.success("collect: " + nearest.getStack().getItem().getName().getString());
+    }
+
+    @Override
+    public ActionResult craft(ServerPlayerEntity bot, String itemId) {
+        if (bot == null || itemId == null || itemId.isEmpty())
+            return ActionResult.unable("craft: 参数无效");
+
+        ServerWorld world = bot.getServerWorld();
+        Identifier id = Identifier.tryParse(itemId);
+        if (id == null) return ActionResult.fail("无效物品ID: " + itemId);
+
+        var recipeManager = world.getRecipeManager();
+        List<RecipeEntry<CraftingRecipe>> allRecipes = recipeManager.listAllOfType(RecipeType.CRAFTING);
+
+        // Step 1: Find recipe that produces target item
+        CraftingRecipe recipe = null;
+        for (RecipeEntry<CraftingRecipe> entry : allRecipes) {
+            ItemStack result = entry.value().getResult(world.getRegistryManager());
+            if (Registries.ITEM.getId(result.getItem()).equals(id)) {
+                recipe = entry.value();
+                break;
+            }
+        }
+        if (recipe == null) return ActionResult.fail("无此配方: " + itemId);
+
+        // Step 2: Determine grid size
+        boolean needsTable = !recipe.fits(2, 2);
+        List<Ingredient> ingredients = recipe.getIngredients();
+        int craftableCount = countCraftable(recipe, bot);
+        if (craftableCount <= 0) return ActionResult.fail("材料不足: " + itemId);
+
+        // Step 3: Open crafting interface
+        if (needsTable) {
+            BlockPos tablePos = findBlockPosByName(world, bot, "crafting_table");
+            if (tablePos == null) return ActionResult.fail("需要工作台");
+            openBlock(bot, tablePos);
+        } else {
+            openInventory(bot);
+        }
+
+        // Wait one tick for screen to open
+        ScreenHandler handler = bot.currentScreenHandler;
+        if (handler == null) return ActionResult.fail("无法打开合成界面");
+
+        try {
+            // Step 4: Place ingredients in grid
+            int gridWidth = needsTable ? CT_GRID_WIDTH : INV_GRID_WIDTH;
+            int gridStart = needsTable ? CT_GRID_START : INV_GRID_START;
+            int invStart = needsTable ? CT_INV_START : INV_INV_START;
+            int hotbarStart = needsTable ? CT_HOTBAR_START : INV_HOTBAR_START;
+
+            if (recipe instanceof ShapedRecipe shaped) {
+                int rw = shaped.getWidth();
+                int rh = shaped.getHeight();
+                for (int row = 0; row < rh; row++) {
+                    for (int col = 0; col < rw; col++) {
+                        int idx = row * rw + col;
+                        if (idx >= ingredients.size()) break;
+                        Ingredient ing = ingredients.get(idx);
+                        if (ing.isEmpty()) continue;
+                        int gridSlot = row * gridWidth + col + gridStart;
+                        moveIngredientToSlot(bot, ing, gridSlot, invStart, hotbarStart);
+                    }
+                }
+            } else {
+                int slot = gridStart;
+                for (Ingredient ing : ingredients) {
+                    if (ing.isEmpty()) continue;
+                    if (slot > (needsTable ? CT_GRID_END : INV_GRID_END)) break;
+                    moveIngredientToSlot(bot, ing, slot, invStart, hotbarStart);
+                    slot++;
+                }
+            }
+
+            // Step 5: Check result slot and take output
+            ItemStack resultStack = handler.getSlot(needsTable ? CT_RESULT : INV_RESULT).getStack();
+            if (resultStack.isEmpty()) {
+                closeWindow(bot);
+                return ActionResult.fail("合成失败: 材料摆放有误");
+            }
+
+            handler.onSlotClick(needsTable ? CT_RESULT : INV_RESULT, 0, SlotActionType.PICKUP, bot);
+            int resultCount = resultStack.getCount();
+            closeWindow(bot);
+
+            return ActionResult.success("合成 " + itemId + " x" + resultCount + " 完成");
+        } catch (Exception e) {
+            try { closeWindow(bot); } catch (Exception ignored) {}
+            return ActionResult.fail("合成失败: " + e.getMessage());
+        }
+    }
+
+    private void openInventory(ServerPlayerEntity bot) {
+        // The 2x2 crafting grid is part of PlayerScreenHandler
+        // which is the default when no container screen is open
+        if (bot.currentScreenHandler == null) {
+            bot.currentScreenHandler = bot.playerScreenHandler;
+        }
+    }
+
+    private int countCraftable(CraftingRecipe recipe, ServerPlayerEntity bot) {
+        PlayerInventory inv = bot.getInventory();
+        int maxSets = Integer.MAX_VALUE;
+        for (Ingredient ing : recipe.getIngredients()) {
+            if (ing.isEmpty()) continue;
+            int matchingSlots = 0;
+            for (int i = 0; i < 36; i++) {
+                if (!inv.main.get(i).isEmpty() && ing.test(inv.main.get(i))) {
+                    matchingSlots += inv.main.get(i).getCount();
+                }
+            }
+            if (matchingSlots == 0) return 0;
+            maxSets = Math.min(maxSets, matchingSlots);
+        }
+        return maxSets;
+    }
+
+    private void moveIngredientToSlot(ServerPlayerEntity bot, Ingredient ing, int targetSlot,
+                                      int invStart, int hotbarStart) {
+        ScreenHandler handler = bot.currentScreenHandler;
+        if (handler == null) return;
+
+        // Find matching item in inventory (search main first, then hotbar)
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = bot.getInventory().getStack(i);
+            if (stack.isEmpty() || !ing.test(stack)) continue;
+
+            int sourceSlot = i < 27 ? (i + invStart) : (i - 27 + hotbarStart);
+            handler.onSlotClick(sourceSlot, 0, SlotActionType.PICKUP, bot);
+            handler.onSlotClick(targetSlot, 0, SlotActionType.PICKUP, bot);
+            return;
+        }
+    }
+
+    private void lookAtEntity(ServerPlayerEntity bot, LivingEntity target) {
+        double px = target.getX();
+        double py = target.getEyeY();
+        double pz = target.getZ();
+        double dx = px - bot.getX();
+        double dy = py - (bot.getY() + bot.getStandingEyeHeight());
+        double dz = pz - bot.getZ();
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float pitch = (float) Math.toDegrees(-Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        bot.setYaw(yaw);
+        bot.setHeadYaw(yaw);
+        bot.setPitch(pitch);
+    }
+
+    private BlockPos findBlockPosByName(net.minecraft.server.world.ServerWorld world,
+                                         ServerPlayerEntity bot, String name) {
+        if (world == null || bot == null || name == null) return null;
+        BlockPos botPos = bot.getBlockPos();
+        for (int dx = -8; dx <= 8; dx++) {
+            for (int dy = -4; dy <= 4; dy++) {
+                for (int dz = -8; dz <= 8; dz++) {
+                    BlockPos pos = botPos.add(dx, dy, dz);
+                    var state = world.getBlockState(pos);
+                    if (state.isAir()) continue;
+                    String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
+                    if (blockId.toLowerCase().contains(name.toLowerCase())) {
+                        return pos;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private BlockPos findNearbyBlock(ServerWorld world, ServerPlayerEntity bot) {

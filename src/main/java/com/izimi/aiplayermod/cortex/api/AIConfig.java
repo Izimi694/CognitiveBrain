@@ -1,11 +1,9 @@
 package com.izimi.aiplayermod.cortex.api;
 
 import com.izimi.aiplayermod.AIPlayerMod;
-import com.izimi.aiplayermod.config.ModConfig;
 import com.izimi.aiplayermod.util.FileUtil;
 import com.izimi.aiplayermod.util.JsonUtil;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class AIConfig {
@@ -47,6 +45,14 @@ public class AIConfig {
         this.enabled = !this.apiKey.isEmpty();
         save();
         AIPlayerMod.LOGGER.info("[AIConfig] API Key 已{}", enabled ? "设置" : "清除");
+    }
+
+    public void setApiModel(String model) {
+        if (model != null && !model.trim().isEmpty()) {
+            this.apiModel = model.trim();
+            save();
+            AIPlayerMod.LOGGER.info("[AIConfig] AI模型已设置为: {}", this.apiModel);
+        }
     }
 
     public boolean isConfigured() {

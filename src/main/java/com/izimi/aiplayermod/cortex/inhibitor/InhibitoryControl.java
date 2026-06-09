@@ -13,7 +13,6 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
-import java.util.HashSet;
 import java.util.Set;
 
 public class InhibitoryControl {
@@ -119,7 +118,6 @@ public class InhibitoryControl {
 
     private HostileEntity findNearestHostile(ServerPlayerEntity bot, int range) {
         World world = bot.getServerWorld();
-        BlockPos pos = bot.getBlockPos();
         HostileEntity nearest = null;
         double nearestDist = Double.MAX_VALUE;
 

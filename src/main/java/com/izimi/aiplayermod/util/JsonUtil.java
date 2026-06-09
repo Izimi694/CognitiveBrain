@@ -7,7 +7,6 @@ import com.google.gson.reflect.TypeToken;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.CopyOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -50,6 +49,11 @@ public class JsonUtil {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> readMapFromFileSafe(Path path) {
+        return readFromFileSafe(path, Map.class);
     }
 
     public static <T> T readFromFileSafe(Path path, Type type) {

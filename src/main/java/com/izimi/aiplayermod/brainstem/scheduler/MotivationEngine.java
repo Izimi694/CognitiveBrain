@@ -1,6 +1,5 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
-import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.amygdala.BotParams;
 import com.izimi.aiplayermod.brainstem.HormonalSystem;
 import net.minecraft.server.network.ServerPlayerEntity;

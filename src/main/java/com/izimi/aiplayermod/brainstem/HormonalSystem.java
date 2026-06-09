@@ -97,10 +97,6 @@ public class HormonalSystem {
         return Math.max(a, b);
     }
 
-    private static double min(double a, double b) {
-        return Math.min(a, b);
-    }
-
     public HormonalState snapshot() {
         return new HormonalState(stress, aggression, curiosity, new HashMap<>(intimacy));
     }

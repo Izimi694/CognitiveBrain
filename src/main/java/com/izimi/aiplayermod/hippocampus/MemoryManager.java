@@ -14,14 +14,30 @@ import java.util.stream.Collectors;
 
 public class MemoryManager {
     private final ModConfig config;
+    private final UUID botId;
     private final List<MemoryEntry> memoryCache = new ArrayList<>();
     private long lastCacheUpdate = 0;
     private static final long CACHE_REFRESH_MS = 60000;
     private int currentGameDay = 1;
 
     public MemoryManager(ModConfig config) {
+        this(config, null);
+    }
+
+    public MemoryManager(ModConfig config, UUID botId) {
         this.config = config;
+        this.botId = botId;
         refreshCache();
+    }
+
+    private Path memoriesDir() {
+        return botId != null
+                ? FileUtil.getBotMemoriesDir(botId)
+                : memoriesDir();
+    }
+
+    private Path latestMemoryPath() {
+        return memoriesDir().resolve("latest.mem");
     }
 
     public void setCurrentGameDay(int day) {
@@ -119,11 +135,11 @@ public class MemoryManager {
     }
 
     private void updateLatest(MemoryEntry memory) {
-        JsonUtil.writeToFileSafeAtomic(FileUtil.getLatestMemoryPath(), memory);
+        JsonUtil.writeToFileSafeAtomic(latestMemoryPath(), memory);
     }
 
     private Path getDayFile(int gameDay) {
-        return FileUtil.getMemoriesDir().resolve(String.format("day_%03d.mem", gameDay));
+        return memoriesDir().resolve(String.format("day_%03d.mem", gameDay));
     }
 
     private List<MemoryEntry> loadDayMemories(Path path) throws IOException {
@@ -134,7 +150,7 @@ public class MemoryManager {
 
     private void refreshCache() {
         memoryCache.clear();
-        Path dir = FileUtil.getMemoriesDir();
+        Path dir = memoriesDir();
         if (!Files.exists(dir)) return;
 
         try (var stream = Files.list(dir)) {

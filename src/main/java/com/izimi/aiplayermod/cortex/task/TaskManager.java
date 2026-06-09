@@ -9,14 +9,34 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 
+@SuppressWarnings("deprecation")
 public class TaskManager {
     private Task activeTask;
     private Task lastTask;
+    private final UUID botId;
 
     public TaskManager() {
+        this(null);
+    }
+
+    public TaskManager(UUID botId) {
+        this.botId = botId;
         activeTask = loadActiveTask();
         lastTask = loadLastTask();
+    }
+
+    private Path activeTaskPath() {
+        return botId != null
+                ? FileUtil.getBotTasksDir(botId).resolve("active_task.json")
+                : activeTaskPath();
+    }
+
+    private Path lastTaskPath() {
+        return botId != null
+                ? FileUtil.getBotTasksDir(botId).resolve("last_task.json")
+                : lastTaskPath();
     }
 
     public Task getActiveTask() {
@@ -56,7 +76,7 @@ public class TaskManager {
 
     private void saveActivePlanToTask() {
         if (activeTask != null) {
-            JsonUtil.writeToFileSafeAtomic(FileUtil.getActiveTaskPath(), activeTask);
+            JsonUtil.writeToFileSafeAtomic(activeTaskPath(), activeTask);
         }
     }
 
@@ -131,30 +151,30 @@ public class TaskManager {
 
     public void saveActiveTask() {
         if (activeTask != null) {
-            JsonUtil.writeToFileSafeAtomic(FileUtil.getActiveTaskPath(), activeTask);
+            JsonUtil.writeToFileSafeAtomic(activeTaskPath(), activeTask);
         } else {
-            FileUtil.deleteIfExists(FileUtil.getActiveTaskPath());
+            FileUtil.deleteIfExists(activeTaskPath());
         }
     }
 
     private void saveLastTask() {
         if (lastTask != null) {
-            JsonUtil.writeToFileSafeAtomic(FileUtil.getLastTaskPath(), lastTask);
+            JsonUtil.writeToFileSafeAtomic(lastTaskPath(), lastTask);
         } else {
-            FileUtil.deleteIfExists(FileUtil.getLastTaskPath());
+            FileUtil.deleteIfExists(lastTaskPath());
         }
     }
 
     private void deleteActiveTask() {
-        FileUtil.deleteIfExists(FileUtil.getActiveTaskPath());
+        FileUtil.deleteIfExists(activeTaskPath());
     }
 
     private Task loadActiveTask() {
-        return JsonUtil.readFromFileSafe(FileUtil.getActiveTaskPath(), Task.class);
+        return JsonUtil.readFromFileSafe(activeTaskPath(), Task.class);
     }
 
     private Task loadLastTask() {
-        return JsonUtil.readFromFileSafe(FileUtil.getLastTaskPath(), Task.class);
+        return JsonUtil.readFromFileSafe(lastTaskPath(), Task.class);
     }
 
     private String generateTaskId() {

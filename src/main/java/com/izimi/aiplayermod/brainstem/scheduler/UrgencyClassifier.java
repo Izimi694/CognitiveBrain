@@ -19,15 +19,13 @@ public class UrgencyClassifier {
         OBSERVE
     }
 
-    private static final double HIGH_THRESHOLD = 0.5;
-    private static final double LOW_THRESHOLD = 0.2;
     private static final double THREAT_WEIGHT = 0.6;
     private static final double TIME_WEIGHT = 0.4;
     private static final int TIME_MAX_TICKS = 600;
     private static final double TIME_FULL_ESCALATION = 1.0;
 
-    public UrgencyLabel classify(HormonalSystem hormones, ServerPlayerEntity bot) {
-        double urgency = computeUrgency(hormones, bot, 0);
+    public UrgencyLabel classify(HormonalSystem hormones, ServerPlayerEntity bot, int ticksInState) {
+        double urgency = computeUrgency(hormones, bot, ticksInState);
         return labelFromUrgency(urgency);
     }
 

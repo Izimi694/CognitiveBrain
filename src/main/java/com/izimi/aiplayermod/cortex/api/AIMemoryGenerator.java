@@ -4,15 +4,12 @@ import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.hippocampus.MemoryEntry;
 import com.izimi.aiplayermod.state.PlayerState;
 import com.izimi.aiplayermod.cortex.task.Task;
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public class AIMemoryGenerator {
-    private static final Gson GSON = new Gson();
     private final AIClient aiClient;
 
     public AIMemoryGenerator(AIClient aiClient) {
