@@ -1,7 +1,7 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
 import com.izimi.aiplayermod.amygdala.BotParams;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import net.minecraft.server.network.ServerPlayerEntity;
 
 import java.util.Random;
@@ -21,6 +21,15 @@ public class MotivationEngine {
 
     private static final double CROSS_INHIBITION_RATIO = 0.7;
     private static final int INHIBITION_WINDOW = 5;
+    private static final double EXPLORE_THRESHOLD = 1.0 / Math.E; // 37% 探索边界
+
+    /** 基于 1/e 法则的探索决策: curiosity > maxCuriosity × (1/e) 时探索 */
+    public static boolean shouldExplore(HormonalSystem hormones) {
+        if (hormones == null) return false;
+        double maxCuriosity = 0.95;
+        double exploreBias = hormones.getCuriosity() / maxCuriosity;
+        return exploreBias > EXPLORE_THRESHOLD;
+    }
 
     private final Random rng = new Random();
     private Perspective lastWinner = null;

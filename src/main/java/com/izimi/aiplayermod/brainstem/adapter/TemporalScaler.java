@@ -1,6 +1,6 @@
 package com.izimi.aiplayermod.brainstem.adapter;
 
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import com.izimi.aiplayermod.brainstem.scheduler.UrgencyClassifier;
 import net.minecraft.server.network.ServerPlayerEntity;
 

@@ -1,5 +1,7 @@
 package com.izimi.aiplayermod.amygdala;
 
+import com.izimi.aiplayermod.bayesian.BayesianFeature;
+import com.izimi.aiplayermod.bayesian.BayesianModule;
 import com.izimi.aiplayermod.brainstem.adapter.ActionResult;
 import com.izimi.aiplayermod.brainstem.adapter.BasicActionAdapter;
 import com.izimi.aiplayermod.brainstem.skill.Skill;
@@ -37,6 +39,7 @@ public class ConditionedReflex {
     private final BasicActionAdapter actionAdapter;
     private final BotParams botParams;
     private final UUID botId;
+    private BayesianModule bayesianModule;
 
     private final Map<String, List<Double>> actionHistory = new HashMap<>();
     private int actionCount = 0;
@@ -46,6 +49,10 @@ public class ConditionedReflex {
 
     public ConditionedReflex(SkillManager skillManager, ModConfig config, BasicActionAdapter actionAdapter) {
         this(skillManager, config, actionAdapter, null);
+    }
+
+    public void setBayesianModule(BayesianModule bayesianModule) {
+        this.bayesianModule = bayesianModule;
     }
 
     public ConditionedReflex(SkillManager skillManager, ModConfig config, BasicActionAdapter actionAdapter, UUID botId) {
@@ -342,6 +349,21 @@ public class ConditionedReflex {
         JsonUtil.writeToFileSafeAtomic(reflexPath, data);
     }
 
+    private List<BayesianFeature> extractContextFeatures(ServerPlayerEntity bot) {
+        if (bot == null) return Collections.emptyList();
+        List<BayesianFeature> features = new ArrayList<>();
+
+        float healthRatio = bot.getHealth() / bot.getMaxHealth();
+        features.add(new BayesianFeature("low_health", healthRatio < 0.3));
+        features.add(new BayesianFeature("injured", healthRatio < 0.6));
+
+        if (bot.getServerWorld() != null) {
+            features.add(new BayesianFeature("night_time", !bot.getServerWorld().isDay()));
+        }
+
+        return features;
+    }
+
     public void recordAction(String skillId, double effectiveness) {
         actionHistory.computeIfAbsent(skillId, k -> new ArrayList<>()).add(effectiveness);
         actionCount++;
@@ -416,6 +438,11 @@ public class ConditionedReflex {
 
         updateReflexStats(skillId, result.success(), result.effectiveness());
 
+        if (bayesianModule != null) {
+            List<BayesianFeature> features = extractContextFeatures(bot);
+            bayesianModule.update(skillId, features, result.success());
+        }
+
         if (result.success()) {
             AIPlayerMod.LOGGER.info("[ConditionedReflex] 成功: {}", skillId);
             AIPlayerMod.onReflexSuccess(bot, skillId);
@@ -432,6 +459,12 @@ public class ConditionedReflex {
         Path path = conditionedDir().resolve(skillId + ".json");
         Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return;
+
+        String status = (String) data.getOrDefault("status", "healthy");
+        if ("trial".equals(status)) {
+            handleTrialResult(data, path, skillId, success);
+            return;
+        }
 
         int count = ((Number) data.getOrDefault("executionCount", 0)).intValue() + 1;
         double oldRate = ((Number) data.getOrDefault("successRate", 0.0)).doubleValue();
@@ -476,11 +509,52 @@ public class ConditionedReflex {
         JsonUtil.writeToFileSafeAtomic(path, data);
     }
 
+    private void handleTrialResult(Map<String, Object> data, Path path, String skillId, boolean success) {
+        int trialSuccesses = ((Number) data.getOrDefault("trialSuccesses", 0)).intValue();
+        int trialFailures = ((Number) data.getOrDefault("trialFailures", 0)).intValue();
+
+        if (success) {
+            trialSuccesses++;
+            data.put("trialSuccesses", trialSuccesses);
+        } else {
+            trialFailures++;
+            data.put("trialFailures", trialFailures);
+        }
+
+        int count = ((Number) data.getOrDefault("executionCount", 0)).intValue() + 1;
+        double oldRate = ((Number) data.getOrDefault("successRate", 0.0)).doubleValue();
+        int oldSuccesses = (int) Math.round(oldRate * (count - 1));
+        int newSuccesses = oldSuccesses + (success ? 1 : 0);
+        double newRate = count > 0 ? newSuccesses / (double) count : 0.0;
+        data.put("executionCount", count);
+        data.put("successRate", newRate);
+
+        if (trialSuccesses >= 3) {
+            data.put("status", "healthy");
+            data.put("proficiency", 0.5);
+            AIPlayerMod.LOGGER.info("[ConditionedReflex] 试炼通过: {} ({}成功/{}失败), 正式加入",
+                    skillId, trialSuccesses, trialFailures);
+        } else if (trialFailures >= 3) {
+            data.put("status", "dormant");
+            data.put("proficiency", 0.1);
+            AIPlayerMod.LOGGER.info("[ConditionedReflex] 试炼失败: {} ({}成功/{}失败), 休眠",
+                    skillId, trialSuccesses, trialFailures);
+        }
+
+        JsonUtil.writeToFileSafeAtomic(path, data);
+
+        if (trialFailures >= 3) {
+            moveToArchived(skillId, data);
+        }
+    }
+
     private void handleReflexFailure(String skillId, ServerPlayerEntity bot,
                                      List<Map<String, Object>> atoms, int atomIdx) {
         Path path = conditionedDir().resolve(skillId + ".json");
         Map<String, Object> data = JsonUtil.readMapFromFileSafe(path);
         if (data == null) return;
+
+        if ("trial".equals(data.getOrDefault("status", "healthy"))) return;
 
         int count = ((Number) data.getOrDefault("executionCount", 0)).intValue();
         double rate = ((Number) data.getOrDefault("successRate", 0.0)).doubleValue();

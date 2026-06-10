@@ -1,6 +1,6 @@
 package com.izimi.aiplayermod.cortex.chat;
 
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 
 import java.util.List;
 import java.util.UUID;

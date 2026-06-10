@@ -55,6 +55,7 @@ public class PlanManager {
         return activePlan;
     }
 
+    @SuppressWarnings("deprecation")
     private void tryEnrichFromAPI(String taskId, String goal) {
         var aiClient = AIPlayerMod.getAIClient();
         if (aiClient == null || !aiClient.isConfigured()) {

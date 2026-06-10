@@ -9,7 +9,8 @@ import com.izimi.aiplayermod.amygdala.DispatchReflex;
 import com.izimi.aiplayermod.amygdala.OneShotAlarmSystem;
 import com.izimi.aiplayermod.amygdala.learning.CorrelationDetector;
 import com.izimi.aiplayermod.amygdala.learning.LearningSystem;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.bayesian.BayesianModule;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import com.izimi.aiplayermod.brainstem.IdleBrain;
 import com.izimi.aiplayermod.brainstem.adapter.TemporalScaler;
 import com.izimi.aiplayermod.brainstem.scheduler.MetaContext;
@@ -21,6 +22,7 @@ import com.izimi.aiplayermod.cortex.task.TaskExecutor;
 import com.izimi.aiplayermod.cortex.task.TaskManager;
 import com.izimi.aiplayermod.hippocampus.MemoryManager;
 import com.izimi.aiplayermod.state.StateManager;
+import com.izimi.aiplayermod.util.FileUtil;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -43,6 +45,7 @@ public class BotInstance {
     private final TemporalScaler temporalScaler;
     private final CorrelationDetector correlationDetector;
     private final DispatchReflex dispatchReflex;
+    private final BayesianModule bayesianModule;
     private final IdleBrain idleBrain;
     private final LearningSystem learningSystem;
     private final TaskManager taskManager;
@@ -52,8 +55,13 @@ public class BotInstance {
 
     private int tickCounter = 0;
     private static final int STATE_SAVE_INTERVAL = 200;
+    private boolean deathGenomeSaved = false;
 
     public BotInstance(UUID botId, String botName, BotPlayer botPlayer) {
+        this(botId, botName, botPlayer, null);
+    }
+
+    public BotInstance(UUID botId, String botName, BotPlayer botPlayer, BotParams inheritedParams) {
         this.botId = botId;
         this.botName = botName;
         this.botPlayer = botPlayer;
@@ -66,7 +74,8 @@ public class BotInstance {
         var localTaskDecomposer = AIPlayerMod.getLocalTaskDecomposer();
         var localChatHandler = AIPlayerMod.getLocalChatHandler();
 
-        this.botParams = BotParams.generate();
+        this.botParams = inheritedParams != null ? inheritedParams : BotParams.generate();
+        this.botParams.withBotId(botId);
         this.conditionedReflex = new ConditionedReflex(skillManager, config, actionAdapter, botId);
         this.alarms = new OneShotAlarmSystem(botId);
         this.hormonalSystem = new HormonalSystem();
@@ -75,6 +84,8 @@ public class BotInstance {
         this.stateManager = new StateManager(botId);
         this.temporalScaler = this.metaScheduler.getTemporalScaler();
         this.dispatchReflex = new DispatchReflex(botParams, botId);
+        this.bayesianModule = new BayesianModule(botId);
+        this.conditionedReflex.setBayesianModule(bayesianModule);
         this.taskManager = new TaskManager(botId);
         this.taskExecutor = new TaskExecutor(taskManager, skillManager, AIPlayerMod.getExecutionLogger());
         this.memoryManager = new MemoryManager(config, botId);
@@ -91,13 +102,23 @@ public class BotInstance {
                 taskManager, memoryManager, stateManager, idleBrain,
                 localTaskDecomposer, localChatHandler, planManager,
                 AIPlayerMod.getSocialObserver(), AIPlayerMod.getFamiliarityTracker(),
+                bayesianModule,
                 botPlayer.asEntity()
             );
     }
 
     public void tick(MinecraftServer server) {
         ServerPlayerEntity bot = botPlayer.asEntity();
-        if (bot == null || bot.isRemoved()) return;
+        if (bot == null) return;
+
+        if (bot.isRemoved()) {
+            saveDeathGenome("removed");
+            return;
+        }
+
+        if (bot.getHealth() <= 0 && !deathGenomeSaved) {
+            saveDeathGenome("killed");
+        }
 
         tickCounter++;
 
@@ -108,6 +129,13 @@ public class BotInstance {
         if (tickCounter % STATE_SAVE_INTERVAL == 0) {
             stateManager.saveState(bot);
         }
+    }
+
+    public void saveDeathGenome(String cause) {
+        if (deathGenomeSaved) return;
+        deathGenomeSaved = true;
+        botParams.saveToPath(FileUtil.getBotParamsPath(botId));
+        GenomeArchivist.saveGenome(botId, botParams, botName, cause);
     }
 
     public void sendMessage(String message) {
@@ -132,6 +160,7 @@ public class BotInstance {
     public TemporalScaler getTemporalScaler() { return temporalScaler; }
     public CorrelationDetector getCorrelationDetector() { return correlationDetector; }
     public DispatchReflex getDispatchReflex() { return dispatchReflex; }
+    public BayesianModule getBayesianModule() { return bayesianModule; }
     public IdleBrain getIdleBrain() { return idleBrain; }
     public LearningSystem getLearningSystem() { return learningSystem; }
     public TaskManager getTaskManager() { return taskManager; }

@@ -1,6 +1,7 @@
 package com.izimi.aiplayermod.amygdala;
 
 import com.izimi.aiplayermod.amygdala.learning.BehaviorEvent;
+import com.izimi.aiplayermod.bayesian.BayesianModule;
 
 import java.util.*;
 
@@ -23,9 +24,15 @@ public class NaiveBayesClassifier {
     }
 
     private final ThresholdConfig thresholdConfig;
+    private final BayesianModule bayesianModule;
 
     public NaiveBayesClassifier(ThresholdConfig thresholdConfig) {
+        this(thresholdConfig, null);
+    }
+
+    public NaiveBayesClassifier(ThresholdConfig thresholdConfig, BayesianModule bayesianModule) {
         this.thresholdConfig = thresholdConfig;
+        this.bayesianModule = bayesianModule;
     }
 
     public Classification classify(Map<String, Deque<BehaviorEvent>> playerWindows,
@@ -46,8 +53,13 @@ public class NaiveBayesClassifier {
             contributingPlayers++;
 
             for (BehaviorEvent event : events) {
-                actionScores.merge(event.action(), playerWeight, Double::sum);
-                totalWeight += playerWeight;
+                double bayesianBoost = 0.0;
+                if (bayesianModule != null) {
+                    bayesianBoost = bayesianModule.predictSuccess("reflex_" + event.action(),
+                            Collections.emptyList()) - 0.5;
+                }
+                actionScores.merge(event.action(), playerWeight * (1.0 + bayesianBoost), Double::sum);
+                totalWeight += playerWeight * (1.0 + bayesianBoost);
             }
         }
 

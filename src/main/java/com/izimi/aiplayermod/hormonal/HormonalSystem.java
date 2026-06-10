@@ -1,4 +1,4 @@
-package com.izimi.aiplayermod.brainstem;
+package com.izimi.aiplayermod.hormonal;
 
 import java.util.Map;
 import java.util.HashMap;

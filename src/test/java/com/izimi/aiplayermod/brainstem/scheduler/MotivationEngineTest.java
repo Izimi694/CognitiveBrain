@@ -1,7 +1,7 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
 import com.izimi.aiplayermod.amygdala.BotParams;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

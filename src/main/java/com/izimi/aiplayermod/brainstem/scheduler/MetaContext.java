@@ -6,7 +6,8 @@ import com.izimi.aiplayermod.amygdala.DispatchReflex;
 import com.izimi.aiplayermod.amygdala.FamiliarityTracker;
 import com.izimi.aiplayermod.amygdala.OneShotAlarmSystem;
 import com.izimi.aiplayermod.amygdala.SocialObserver;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.bayesian.BayesianModule;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import com.izimi.aiplayermod.brainstem.IdleBrain;
 import com.izimi.aiplayermod.brainstem.innate.InnateReflexRegistry;
 import com.izimi.aiplayermod.cortex.inhibitor.InhibitoryControl;
@@ -42,6 +43,7 @@ public class MetaContext {
     private final PlanManager planManager;
     private final SocialObserver socialObserver;
     private final FamiliarityTracker familiarityTracker;
+    private final BayesianModule bayesianModule;
     private final ServerPlayerEntity bot;
 
     private String pendingChatMessage;
@@ -71,6 +73,7 @@ public class MetaContext {
                        PlanManager planManager,
                        SocialObserver socialObserver,
                        FamiliarityTracker familiarityTracker,
+                       BayesianModule bayesianModule,
                        ServerPlayerEntity bot) {
         this.botId = botId;
         this.botName = botName;
@@ -90,6 +93,7 @@ public class MetaContext {
         this.planManager = planManager;
         this.socialObserver = socialObserver;
         this.familiarityTracker = familiarityTracker;
+        this.bayesianModule = bayesianModule;
         this.bot = bot;
     }
 
@@ -111,6 +115,7 @@ public class MetaContext {
     public PlanManager planManager() { return planManager; }
     public SocialObserver socialObserver() { return socialObserver; }
     public FamiliarityTracker familiarityTracker() { return familiarityTracker; }
+    public BayesianModule bayesianModule() { return bayesianModule; }
     public ServerPlayerEntity bot() { return bot; }
 
     public Task activeTask() {
@@ -242,7 +247,8 @@ public class MetaContext {
         var ctx = new MetaContext(botId, botName, params, hormones, alarms,
                 conditionedReflex, dispatchReflex, reflexRegistry, inhibitor,
                 taskManager, memoryManager, stateManager, idleBrain, localPlanner,
-                localChatHandler, planManager, socialObserver, familiarityTracker, newBot);
+                localChatHandler, planManager, socialObserver, familiarityTracker,
+                bayesianModule, newBot);
         ctx.p3Cooldown = this.p3Cooldown;
         ctx.lastPlayerMessage = this.lastPlayerMessage;
         ctx.pendingChatMessage = this.pendingChatMessage;

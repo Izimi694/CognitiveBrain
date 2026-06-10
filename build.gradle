@@ -30,14 +30,17 @@ dependencies {
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 	testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-	testImplementation 'org.mockito:mockito-core:5.10.0'
-	testImplementation 'org.mockito:mockito-junit-jupiter:5.10.0'
+	testImplementation 'org.mockito:mockito-core:5.23.0'
+	testImplementation 'org.mockito:mockito-junit-jupiter:5.23.0'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testRuntimeOnly 'org.junit.platform:junit-platform-console-standalone:1.10.2'
 }
 
 test {
 	useJUnitPlatform()
+	jvmArgs '--add-opens', 'java.base/java.lang=ALL-UNNAMED'
+	jvmArgs '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED'
+	jvmArgs '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED'
 }
 
 task runTests(type: JavaExec, dependsOn: testClasses) {

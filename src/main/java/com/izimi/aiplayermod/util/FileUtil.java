@@ -75,6 +75,22 @@ public class FileUtil {
         return getAIMemoryDir().resolve("thresholds");
     }
 
+    public static Path getBayesianDir() {
+        return getAIMemoryDir().resolve("bayesian");
+    }
+
+    public static Path getBotBayesianDir(UUID botId) {
+        return getBotDir(botId).resolve("bayesian");
+    }
+
+    public static Path getReflexPacksDir() {
+        return getAIMemoryDir().resolve("reflex_packs");
+    }
+
+    public static Path getBotGenomeDir() {
+        return getBotsDir().resolve("genomes");
+    }
+
     public static Path getBotsDir() {
         return getAIMemoryDir().resolve("bots");
     }
@@ -129,6 +145,10 @@ public class FileUtil {
 
     public static Path getBotParamsPath() {
         return getConfigDir().resolve("bot_params.json");
+    }
+
+    public static Path getBotParamsPath(UUID botId) {
+        return getBotDir(botId).resolve("bot_params.json");
     }
 
     public static Path getInnateReflexWeightsPath() {
@@ -191,6 +211,13 @@ public class FileUtil {
         Files.createDirectories(getConditionedDir());
         Files.createDirectories(getArchivedDir());
         Files.createDirectories(getThresholdsDir());
+        Files.createDirectories(getBayesianDir());
+        Files.createDirectories(getReflexPacksDir());
+        Files.createDirectories(getBotGenomeDir());
+    }
+
+    public static boolean fileExists(Path path) {
+        return path != null && Files.exists(path);
     }
 
     public static boolean deleteIfExists(Path path) {
@@ -207,7 +234,7 @@ public class FileUtil {
                 getTrialsDir(), getEvaluationsDir(), getCharacterDir(),
                 getPlansDir(), getStateDir(), getExecutionLogsDir(),
                 getConfigDir(), getThresholdsDir(),
-                getHighlightsDir()
+                getHighlightsDir(), getBayesianDir()
         );
     }
 

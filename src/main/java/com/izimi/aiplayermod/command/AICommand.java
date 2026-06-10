@@ -3,6 +3,7 @@ package com.izimi.aiplayermod.command;
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.brainstem.bot.BotInstance;
 import com.izimi.aiplayermod.brainstem.bot.BotManager;
+import com.izimi.aiplayermod.brainstem.bot.ReflexPackManager;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.server.command.ServerCommandSource;
@@ -76,6 +77,55 @@ public class AICommand {
                             return setApiModel(ctx.getSource(), modelName);
                         }))
                 )
+                .then(literal("reflexpack")
+                        .then(literal("export")
+                                .then(argument("botName", StringArgumentType.word())
+                                        .then(argument("packName", StringArgumentType.word())
+                                                .executes(ctx -> {
+                                                    String botName = StringArgumentType.getString(ctx, "botName");
+                                                    String packName = StringArgumentType.getString(ctx, "packName");
+                                                    return exportReflexPack(ctx.getSource(), botName, packName, true);
+                                                })
+                                                .then(literal("noprior")
+                                                        .executes(ctx -> {
+                                                            String botName = StringArgumentType.getString(ctx, "botName");
+                                                            String packName = StringArgumentType.getString(ctx, "packName");
+                                                            return exportReflexPack(ctx.getSource(), botName, packName, false);
+                                                        })
+                                                )
+                                        )
+                                )
+                        )
+                        .then(literal("import")
+                                .then(argument("botName", StringArgumentType.word())
+                                        .then(argument("packName", StringArgumentType.word())
+                                                .executes(ctx -> {
+                                                    String botName = StringArgumentType.getString(ctx, "botName");
+                                                    String packName = StringArgumentType.getString(ctx, "packName");
+                                                    return importReflexPack(ctx.getSource(), botName, packName, false);
+                                                })
+                                                .then(literal("reset")
+                                                        .executes(ctx -> {
+                                                            String botName = StringArgumentType.getString(ctx, "botName");
+                                                            String packName = StringArgumentType.getString(ctx, "packName");
+                                                            return importReflexPack(ctx.getSource(), botName, packName, true);
+                                                        })
+                                                )
+                                        )
+                                )
+                        )
+                        .then(literal("list")
+                                .executes(ctx -> listReflexPacks(ctx.getSource()))
+                        )
+                        .then(literal("delete")
+                                .then(argument("packName", StringArgumentType.word())
+                                        .executes(ctx -> {
+                                            String packName = StringArgumentType.getString(ctx, "packName");
+                                            return deleteReflexPack(ctx.getSource(), packName);
+                                        })
+                                )
+                        )
+                )
                 .then(literal("bot")
                         .then(argument("botName", StringArgumentType.word())
                                 .then(literal("status").executes(ctx -> {
@@ -138,6 +188,11 @@ public class AICommand {
         source.sendFeedback(() -> Text.literal("§e/ai apikey §7- 查看API密钥状态"), false);
         source.sendFeedback(() -> Text.literal("§e/ai model [name] §7- 查看/设置AI模型 (如 deepseek-chat)"), false);
         source.sendFeedback(() -> Text.literal("§e/ai bot <名字> <指令> §7- 指定AI执行指令"), false);
+        source.sendFeedback(() -> Text.literal("§e/ai reflexpack export <机器人> <包名> §7- 导出反射 (默认含先验)"), false);
+        source.sendFeedback(() -> Text.literal("§e/ai reflexpack export <机器人> <包名> noprior §7- 导出反射 (不含先验)"), false);
+        source.sendFeedback(() -> Text.literal("§e/ai reflexpack import <机器人> <包名> [reset] §7- 导入反射 (合并/冷启动)"), false);
+        source.sendFeedback(() -> Text.literal("§e/ai reflexpack list §7- 列出已导入反射包"), false);
+        source.sendFeedback(() -> Text.literal("§e/ai reflexpack delete <包名> §7- 删除反射包"), false);
         return 1;
     }
 
@@ -395,6 +450,98 @@ public class AICommand {
             source.sendFeedback(() -> Text.literal("§c[AI Player] 建议触发失败: " + e.getMessage()), false);
         }
         return 1;
+    }
+
+    // ── ReflexPack command handlers ──
+
+    private static BotInstance resolveBotForPack(ServerCommandSource source, String botName) {
+        BotManager mgr = getManager();
+        if (mgr == null || mgr.isEmpty()) return null;
+        if (botName != null) return mgr.getByName(botName);
+        BotInstance bot = resolveBot(source, null);
+        return bot;
+    }
+
+    private static int exportReflexPack(ServerCommandSource source, String botName, String packName, boolean includePrior) {
+        try {
+            BotInstance bot = resolveBotForPack(source, botName);
+            if (bot == null) {
+                source.sendFeedback(() -> Text.literal("§7[ReflexPack] 没有活动的AI"), false);
+                return 0;
+            }
+            boolean ok = ReflexPackManager.exportPack(bot.getBotId(), packName, includePrior);
+            if (ok) {
+                source.sendFeedback(() -> Text.literal("§a[ReflexPack] 导出成功: " + packName
+                        + (includePrior ? " (含先验)" : " (不含先验)")), false);
+            } else {
+                source.sendFeedback(() -> Text.literal("§c[ReflexPack] 导出失败: " + packName), false);
+            }
+            return ok ? 1 : 0;
+        } catch (Exception e) {
+            source.sendFeedback(() -> Text.literal("§c[ReflexPack] 导出异常: " + e.getMessage()), false);
+            return 0;
+        }
+    }
+
+    private static int importReflexPack(ServerCommandSource source, String botName, String packName, boolean reset) {
+        if (!source.hasPermissionLevel(2)) {
+            source.sendFeedback(() -> Text.literal("§c[ReflexPack] 仅 OP 可导入反射包"), false);
+            return 0;
+        }
+        try {
+            BotInstance bot = resolveBotForPack(source, botName);
+            if (bot == null) {
+                source.sendFeedback(() -> Text.literal("§7[ReflexPack] 没有活动的AI"), false);
+                return 0;
+            }
+            boolean ok = ReflexPackManager.importPack(bot.getBotId(), packName, reset);
+            if (ok) {
+                source.sendFeedback(() -> Text.literal("§a[ReflexPack] 导入成功: " + packName
+                        + (reset ? " (冷启动)" : " (合并)")), false);
+            } else {
+                source.sendFeedback(() -> Text.literal("§c[ReflexPack] 导入失败: " + packName), false);
+            }
+            return ok ? 1 : 0;
+        } catch (Exception e) {
+            source.sendFeedback(() -> Text.literal("§c[ReflexPack] 导入异常: " + e.getMessage()), false);
+            return 0;
+        }
+    }
+
+    private static int listReflexPacks(ServerCommandSource source) {
+        try {
+            var packs = ReflexPackManager.listPacks();
+            if (packs.isEmpty()) {
+                source.sendFeedback(() -> Text.literal("§7[ReflexPack] 没有已导入的反射包"), false);
+                return 0;
+            }
+            source.sendFeedback(() -> Text.literal("§6===== 反射包列表 (" + packs.size() + "个) ====="), false);
+            for (String desc : packs) {
+                source.sendFeedback(() -> Text.literal("§e  " + desc), false);
+            }
+        } catch (Exception e) {
+            source.sendFeedback(() -> Text.literal("§c[ReflexPack] 查询失败: " + e.getMessage()), false);
+        }
+        return 1;
+    }
+
+    private static int deleteReflexPack(ServerCommandSource source, String packName) {
+        if (!source.hasPermissionLevel(2)) {
+            source.sendFeedback(() -> Text.literal("§c[ReflexPack] 仅 OP 可删除反射包"), false);
+            return 0;
+        }
+        try {
+            boolean ok = ReflexPackManager.deletePack(packName);
+            if (ok) {
+                source.sendFeedback(() -> Text.literal("§a[ReflexPack] 删除成功: " + packName), false);
+            } else {
+                source.sendFeedback(() -> Text.literal("§7[ReflexPack] 包不存在: " + packName), false);
+            }
+            return ok ? 1 : 0;
+        } catch (Exception e) {
+            source.sendFeedback(() -> Text.literal("§c[ReflexPack] 删除异常: " + e.getMessage()), false);
+            return 0;
+        }
     }
 
     // Shared utility methods

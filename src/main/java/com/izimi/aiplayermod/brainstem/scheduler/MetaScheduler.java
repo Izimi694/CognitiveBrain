@@ -24,6 +24,23 @@ public class MetaScheduler {
     private static final int TIME_ESCALATION_TICKS = 200;
     private static final int FLOW_STUCK_THRESHOLD = 600;
 
+    // ── e-based timing constants: 63.2% execution / 36.8% buffer ──
+    private static final double EXECUTION_RATIO = 1.0 - (1.0 / Math.E); // ≈ 0.632
+    private static final double PREEMPT_THRESHOLD = 1.0 / Math.E;
+
+    /** 计算可用时间片: 63.2% 执行, 36.8% 缓冲 */
+    public static long computeTimeSlice(long totalLatencyBound, int taskCount, long switchOverheadMs) {
+        if (taskCount <= 0) return totalLatencyBound;
+        long available = totalLatencyBound - (switchOverheadMs * taskCount);
+        if (available <= 0) return Math.max(1, totalLatencyBound / taskCount);
+        return (long) (available / taskCount * EXECUTION_RATIO);
+    }
+
+    /** 当新任务优先级超出当前任务优先级 × (1 + 1/e) 时触发抢占 */
+    public static boolean shouldPreempt(double currentPriority, double newPriority) {
+        return newPriority > currentPriority * (1.0 + PREEMPT_THRESHOLD);
+    }
+
     private final MotivationEngine motivationEngine;
     private final UrgencyClassifier urgencyClassifier;
     private final TemporalScaler temporalScaler;

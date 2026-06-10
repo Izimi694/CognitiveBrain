@@ -1,9 +1,10 @@
 package com.izimi.aiplayermod.brainstem.bot;
 
 import com.izimi.aiplayermod.AIPlayerMod;
-import com.izimi.aiplayermod.amygdala.ConditionedReflex;
+import com.izimi.aiplayermod.amygdala.BotParams;
 import com.izimi.aiplayermod.brainstem.adapter.TemporalScaler;
 import com.izimi.aiplayermod.util.FileUtil;
+import com.izimi.aiplayermod.util.JsonUtil;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.PlayerManager;
@@ -21,6 +22,10 @@ public class BotManager {
     private final Map<UUID, BotInstance> bots = new LinkedHashMap<>();
 
     public BotInstance spawn(String name, MinecraftServer server, ServerWorld world, Vec3d position) {
+        return spawn(name, server, world, position, true);
+    }
+
+    public BotInstance spawn(String name, MinecraftServer server, ServerWorld world, Vec3d position, boolean inheritGenome) {
         UUID botId = UUID.randomUUID();
         GameProfile profile = new GameProfile(botId, name);
         BotPlayer botPlayer = BotPlayer.create(server, world, profile);
@@ -38,7 +43,19 @@ public class BotManager {
         entity.setHealth(20.0f);
         entity.getHungerManager().setFoodLevel(20);
 
-        BotInstance instance = new BotInstance(botId, name, botPlayer);
+        // Phase 7: Inherit params from genome archive if available
+        BotParams childParams = null;
+        if (inheritGenome && GenomeArchivist.hasGenomes()) {
+            BotParams parent = GenomeArchivist.getLatestGenomeParams();
+            if (parent != null) {
+                BotParams p2 = getSecondParent(parent);
+                childParams = p2 != null ? BotParams.inherit(parent, p2) : BotParams.inherit(parent);
+                AIPlayerMod.LOGGER.info("[BotManager] 继承参数: {} (gen {}) -> {} (gen {})",
+                        parent.getGeneration(), parent.getGeneration() + 1, name, childParams.getGeneration());
+            }
+        }
+
+        BotInstance instance = new BotInstance(botId, name, botPlayer, childParams);
 
         FileUtil.getBotDir(botId).toFile().mkdirs();
 
@@ -49,11 +66,26 @@ public class BotManager {
         return instance;
     }
 
+    private BotParams getSecondParent(BotParams primary) {
+        List<GenomeArchivist.GenomeRecord> records = GenomeArchivist.listGenomes();
+        if (records.size() < 2) return null;
+        // Pick a genome with different parentId if possible
+        for (var r : records) {
+            if (r.parentId() == null || !r.parentId().equals(primary.getBotId())) {
+                return GenomeArchivist.loadGenomeParams(r.botId());
+            }
+        }
+        return null;
+    }
+
     public boolean despawn(UUID botId) {
         BotInstance instance = bots.get(botId);
         if (instance == null) return false;
 
         try {
+            // Save genome before removing (Phase 7)
+            instance.saveDeathGenome("despawned");
+
             MinecraftServer server = instance.getBotPlayer().getServer();
             if (server != null) {
                 server.getPlayerManager().remove(instance.asEntity());
@@ -148,6 +180,7 @@ public class BotManager {
         List<BotInstance> active = new ArrayList<>(bots.values());
         for (BotInstance instance : active) {
             if (!instance.isSpawned()) {
+                instance.saveDeathGenome("removed");
                 bots.remove(instance.getBotId());
                 continue;
             }
@@ -161,6 +194,7 @@ public class BotManager {
         }
     }
 
+    // Phase 7: Scaffold-style reflex inheritance (trial-first)
     private void copyReflexesFromMentor(BotInstance newBot) {
         if (bots.isEmpty()) return;
 
@@ -172,22 +206,44 @@ public class BotManager {
 
         try {
             Files.createDirectories(newBotDir);
-            try (var stream = Files.walk(mentorDir)) {
-                stream.filter(Files::isRegularFile)
+            try (var stream = Files.list(mentorDir)) {
+                stream.filter(p -> p.toString().endsWith(".json"))
                         .forEach(src -> {
                             try {
                                 Path rel = mentorDir.relativize(src);
                                 Path dest = newBotDir.resolve(rel);
-                                Files.copy(src, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
-                                ConditionedReflex.resetReflexWeights(dest);
-                            } catch (IOException e) {
+                                Map<String, Object> data = JsonUtil.readMapFromFileSafe(src);
+                                if (data == null) return;
+
+                                // Trial-first: bot gets full template, self-validates before adopting
+                                data.put("status", "trial");
+                                data.put("trialSuccesses", 0);
+                                data.put("trialFailures", 0);
+                                data.put("shortTermWeight", 0.5);
+                                data.put("longTermBaseline", 0.5);
+                                data.put("proficiency", 0.3);
+                                data.put("executionCount", 0);
+                                data.put("successRate", 0.0);
+
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> atoms = (List<Map<String, Object>>) data.get("atoms");
+                                if (atoms != null) {
+                                    for (Map<String, Object> atom : atoms) {
+                                        atom.put("executionCount", 0);
+                                        atom.put("successRate", 0.0);
+                                        atom.put("proficiency", 0.1);
+                                    }
+                                }
+
+                                JsonUtil.writeToFileSafeAtomic(dest, data);
+                            } catch (Exception e) {
                                 AIPlayerMod.LOGGER.warn("[BotManager] 复制反射失败: {}", src, e);
                             }
                         });
             }
-            AIPlayerMod.LOGGER.info("[BotManager] 从 {} 复制 {} 个反射到 {}",
-                    mentor.getBotName(), Files.list(mentorDir).count(), newBot.getBotName());
+            AIPlayerMod.LOGGER.info("[BotManager] 从 {} 继承反射到 {} (trial-first)",
+                    mentor.getBotName(), newBot.getBotName());
         } catch (IOException e) {
             AIPlayerMod.LOGGER.warn("[BotManager] 冷启动反射复制失败", e);
         }

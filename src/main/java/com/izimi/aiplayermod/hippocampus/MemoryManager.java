@@ -1,6 +1,8 @@
 package com.izimi.aiplayermod.hippocampus;
 
 import com.izimi.aiplayermod.AIPlayerMod;
+import com.izimi.aiplayermod.bayesian.BayesianModule;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import com.izimi.aiplayermod.config.ModConfig;
 import com.izimi.aiplayermod.cortex.task.Task;
 import com.izimi.aiplayermod.util.FileUtil;
@@ -33,7 +35,7 @@ public class MemoryManager {
     private Path memoriesDir() {
         return botId != null
                 ? FileUtil.getBotMemoriesDir(botId)
-                : memoriesDir();
+                : FileUtil.getMemoriesDir();
     }
 
     private Path latestMemoryPath() {
@@ -107,6 +109,35 @@ public class MemoryManager {
                     return false;
                 })
                 .collect(Collectors.toList());
+    }
+
+    public List<MemoryEntry> retrieve(String query, HormonalSystem hormones, BayesianModule bayes, int topK) {
+        if (query == null) return getRecentMemories();
+        List<MemoryEntry> all = getRecentMemories();
+        if (all.isEmpty()) return all;
+
+        // 阶段1: 激素粗筛 (curiosity 决定时间窗口阈值)
+        double curiosity = hormones != null ? hormones.getCuriosity() : 0.5;
+        long maxAgeMs = (long) (curiosity * 86400000L * 7); // curiosity 比例决定回溯天数
+        long cutoff = System.currentTimeMillis() - maxAgeMs;
+        List<MemoryEntry> coarse = all.stream()
+                .filter(m -> m.timestamp >= cutoff)
+                .collect(Collectors.toList());
+        if (coarse.isEmpty()) coarse = all;
+
+        // 阶段2: 贝叶斯精排
+        if (bayes != null) {
+            coarse.sort((a, b) -> {
+                String textA = a.summary != null ? a.summary : "";
+                String textB = b.summary != null ? b.summary : "";
+                double scoreA = bayes.predictRelevance(query, textA);
+                double scoreB = bayes.predictRelevance(query, textB);
+                return Double.compare(scoreB, scoreA);
+            });
+        }
+
+        // 阶段3: 取 topK
+        return coarse.stream().limit(topK > 0 ? topK : 5).collect(Collectors.toList());
     }
 
     public boolean hasNotSeenRecently(String entityType, long maxAgeMs) {

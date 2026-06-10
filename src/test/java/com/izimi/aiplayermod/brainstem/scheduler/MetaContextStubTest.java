@@ -1,20 +1,23 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
 import com.izimi.aiplayermod.amygdala.BotParams;
 import com.izimi.aiplayermod.amygdala.ConditionedReflex;
 import com.izimi.aiplayermod.amygdala.DispatchReflex;
 import com.izimi.aiplayermod.amygdala.FamiliarityTracker;
 import com.izimi.aiplayermod.amygdala.SocialObserver;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
 import com.izimi.aiplayermod.brainstem.IdleBrain;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 
 class MetaContextStubTest {
 
@@ -56,6 +59,7 @@ class MetaContextStubTest {
                 null,
                 socialObserver,
                 familiarityTracker,
+                null,
                 null
         );
     }
@@ -87,7 +91,8 @@ class MetaContextStubTest {
         var ctxNoReflex = new MetaContext(
                 UUID.randomUUID(), "TestBot", params, hormones, null,
                 null, dispatchReflex, null, null, null, null, null,
-                mock(IdleBrain.class), null, null, null, socialObserver, familiarityTracker, null
+                mock(IdleBrain.class), null, null, null, socialObserver, familiarityTracker,
+                null, null
         );
         assertFalse(ctxNoReflex.hasHighProficiencyReflex(null));
     }
@@ -141,7 +146,8 @@ class MetaContextStubTest {
         var ctxNoReflex = new MetaContext(
                 UUID.randomUUID(), "TestBot", params, hormones, null,
                 null, dispatchReflex, null, null, null, null, null,
-                mock(IdleBrain.class), null, null, null, socialObserver, familiarityTracker, null
+                mock(IdleBrain.class), null, null, null, socialObserver, familiarityTracker,
+                null, null
         );
         assertEquals(0, ctxNoReflex.getConsecutiveFailures());
     }

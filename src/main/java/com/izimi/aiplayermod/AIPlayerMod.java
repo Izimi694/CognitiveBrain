@@ -6,7 +6,7 @@ import com.izimi.aiplayermod.cortex.planner.LocalTaskDecomposer;
 import com.izimi.aiplayermod.cortex.chat.LocalChatHandler;
 import com.izimi.aiplayermod.brainstem.adapter.BasicActionAdapter;
 import com.izimi.aiplayermod.brainstem.adapter.MinecraftActionAdapter;
-import com.izimi.aiplayermod.brainstem.HormonalSystem;
+import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import com.izimi.aiplayermod.brainstem.scheduler.*;
 import com.izimi.aiplayermod.amygdala.DispatchReflex;
 import com.izimi.aiplayermod.amygdala.OneShotAlarmSystem;
@@ -35,6 +35,8 @@ import com.izimi.aiplayermod.brainstem.skill.SkillManager;
 import com.izimi.aiplayermod.amygdala.ConditionedReflex;
 import com.izimi.aiplayermod.log.ExecutionLogger;
 import com.izimi.aiplayermod.amygdala.learning.LearningSystem;
+import com.izimi.aiplayermod.bayesian.BayesianModule;
+import com.izimi.aiplayermod.cortex.api.TemplateManager;
 import com.izimi.aiplayermod.brainstem.innate.InnateReflexRegistry;
 import com.izimi.aiplayermod.brainstem.innate.MinecraftReflexEvaluator;
 import com.izimi.aiplayermod.util.FileUtil;
@@ -89,6 +91,8 @@ public class AIPlayerMod implements ModInitializer {
     private static KnowledgeBase knowledgeBase;
     private static LocalTaskDecomposer localTaskDecomposer;
     private static LocalChatHandler localChatHandler;
+    private static BayesianModule bayesianModule;
+    private static TemplateManager templateManager;
 
     public record PendingChat(String message, String stateStr, String taskStr, String memsStr) {}
     private static PendingChat pendingChat;
@@ -114,6 +118,7 @@ public class AIPlayerMod implements ModInitializer {
         LOGGER.info("[AI Player] AI客户端已初始化 (模式: {})",
                 aiClient.isConfigured() ? "AI" : "规则引擎");
 
+        templateManager = new TemplateManager(aiClient);
         aiTaskPlanner = new AITaskPlanner(aiClient);
         aiChatHandler = new AIChatHandler(aiClient);
         aiMemoryGenerator = new AIMemoryGenerator(aiClient);
@@ -151,7 +156,9 @@ public class AIPlayerMod implements ModInitializer {
         evaluationCycle = new EvaluationCycle(conditionedReflex);
         familiarityTracker = new FamiliarityTracker();
         socialObserver = new SocialObserver(familiarityTracker);
-        socialClassifier = new NaiveBayesClassifier(thresholdConfig);
+        bayesianModule = new BayesianModule(null);
+        conditionedReflex.setBayesianModule(bayesianModule);
+        socialClassifier = new NaiveBayesClassifier(thresholdConfig, bayesianModule);
         inhibitor = new InhibitoryControl();
 
         botController = new BotController(botSpawner, taskManager, taskExecutor, stateManager,
@@ -181,6 +188,7 @@ public class AIPlayerMod implements ModInitializer {
                 planManager,
                 socialObserver,
                 familiarityTracker,
+                bayesianModule,
                 null
         );
         botController.setMetaScheduler(metaScheduler, metaContext);
@@ -360,6 +368,8 @@ public class AIPlayerMod implements ModInitializer {
     public static KnowledgeBase getKnowledgeBase() { return knowledgeBase; }
     public static LocalTaskDecomposer getLocalTaskDecomposer() { return localTaskDecomposer; }
     public static LocalChatHandler getLocalChatHandler() { return localChatHandler; }
+    public static BayesianModule getBayesianModule() { return bayesianModule; }
+    public static TemplateManager getTemplateManager() { return templateManager; }
 
     // UUID-based overloads — route through BotManager
     public static ConditionedReflex getConditionedReflex(UUID botId) {
@@ -400,6 +410,14 @@ public class AIPlayerMod implements ModInitializer {
             if (inst != null) return inst.getHormonalSystem();
         }
         return null;
+    }
+
+    public static BayesianModule getBayesianModule(UUID botId) {
+        if (botManager != null) {
+            BotInstance inst = botManager.getById(botId);
+            if (inst != null) return inst.getBayesianModule();
+        }
+        return bayesianModule;
     }
 
     public static boolean hasPendingChat(double timeoutSecs) {

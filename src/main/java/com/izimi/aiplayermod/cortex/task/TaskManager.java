@@ -30,13 +30,13 @@ public class TaskManager {
     private Path activeTaskPath() {
         return botId != null
                 ? FileUtil.getBotTasksDir(botId).resolve("active_task.json")
-                : activeTaskPath();
+                : FileUtil.getActiveTaskPath();
     }
 
     private Path lastTaskPath() {
         return botId != null
                 ? FileUtil.getBotTasksDir(botId).resolve("last_task.json")
-                : lastTaskPath();
+                : FileUtil.getLastTaskPath();
     }
 
     public Task getActiveTask() {
