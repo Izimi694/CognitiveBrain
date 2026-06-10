@@ -1,6 +1,9 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
 import com.izimi.aiplayermod.AIPlayerMod;
+import com.izimi.aiplayermod.api.BotContext;
+import com.izimi.aiplayermod.api.MetaState;
+import com.izimi.aiplayermod.api.WorldContext;
 import com.izimi.aiplayermod.amygdala.DispatchReflex;
 import com.izimi.aiplayermod.amygdala.OneShotAlarmSystem;
 import com.izimi.aiplayermod.amygdala.learning.CorrelationDetector;
@@ -8,7 +11,6 @@ import com.izimi.aiplayermod.brainstem.adapter.TemporalScaler;
 import com.izimi.aiplayermod.brainstem.innate.InnateReflex;
 import com.izimi.aiplayermod.brainstem.innate.InnateReflexRegistry;
 import com.izimi.aiplayermod.cortex.inhibitor.InhibitoryControl;
-import com.izimi.aiplayermod.cortex.chat.LocalChatHandler;
 import com.izimi.aiplayermod.cortex.task.Task;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -56,10 +58,9 @@ public class MetaScheduler {
         this.correlationDetector = cd;
     }
 
-    private ProblemLabel labelProblem(MetaContext ctx, Perspective perspective) {
-        InnateReflexRegistry reflex = ctx.reflexRegistry();
-        OneShotAlarmSystem alarms = ctx.alarms();
-        ServerPlayerEntity bot = ctx.bot();
+    private ProblemLabel labelProblem(BotContext botCtx, WorldContext worldCtx, ServerPlayerEntity bot, Perspective perspective) {
+        InnateReflexRegistry reflex = worldCtx.brainstem().innateReflexes();
+        OneShotAlarmSystem alarms = botCtx.alarmSystem();
 
         switch (perspective) {
             case SURVIVAL -> {
@@ -72,16 +73,21 @@ public class MetaScheduler {
                 return ProblemLabel.TRIVIAL;
             }
             case TASK -> {
-                if (ctx.activeTask() != null)           return ProblemLabel.TASK_ACTIVE;
-                if (ctx.hasHighProficiencyReflex(bot))  return ProblemLabel.ROUTINE;
+                if (botCtx.taskManager() != null && botCtx.taskManager().getActiveTask() != null)
+                    return ProblemLabel.TASK_ACTIVE;
+                if (botCtx.conditionedReflex() != null && botCtx.conditionedReflex().getHighestProficiency() >= 0.8)
+                    return ProblemLabel.ROUTINE;
                 return ProblemLabel.TRIVIAL;
             }
             case SOCIAL -> {
-                if (ctx.hasGroupActivity()) return ProblemLabel.SOCIAL;
+                var social = worldCtx.amygdala().socialObserver();
+                if (social != null && social.getNearbyPlayerCount() > 1) return ProblemLabel.SOCIAL;
                 return ProblemLabel.TRIVIAL;
             }
             case CURIOUS -> {
-                if (ctx.hasRecentNovelty()) return ProblemLabel.NOVEL;
+                var h = botCtx.hormonalSystem();
+                if (h.getCuriosity() > h.getCuriosityThreshold(botCtx.botParams().getBeta(), h.getStress()))
+                    return ProblemLabel.NOVEL;
                 return ProblemLabel.FAMILIAR;
             }
             case CAUTIOUS -> {
@@ -92,87 +98,88 @@ public class MetaScheduler {
         return ProblemLabel.TRIVIAL;
     }
 
-    private FlowLevel getFlowAdjustment(MetaContext ctx) {
-        if (ctx.getLastProficiency() >= 0.8 && !ctx.hasEnvironmentAnomaly())
+    private FlowLevel getFlowAdjustment(BotContext botCtx, ServerPlayerEntity bot, MetaState state) {
+        double proficiency = botCtx.conditionedReflex() != null ? botCtx.conditionedReflex().getHighestProficiency() : 0;
+        if (proficiency >= 0.8 && !state.hasSuddenEnvironmentChange())
             return FlowLevel.AUTOPILOT;
-        if (ctx.getLastActionSuccessCount() > 10)
+        if (state.getLastActionSuccessCount() > 10)
             return FlowLevel.AUTOPILOT;
-        if (ctx.getPlayerInactiveMinutes() > 5)
+        if (state.getPlayerInactiveMinutes() > 5)
             return FlowLevel.AUTOPILOT;
-        if (ctx.getConsecutiveFailures() >= 2)
+        if (botCtx.conditionedReflex() != null && botCtx.conditionedReflex().getConsecutiveFailures() >= 2)
             return FlowLevel.OVERRIDE;
-        if (ctx.hasNovelEntity())
+        if (state.hasNovelEntity())
             return FlowLevel.OVERRIDE;
-        if (ctx.hasSuddenEnvironmentChange())
+        if (state.hasSuddenEnvironmentChange())
             return FlowLevel.OVERRIDE;
-        if (ctx.hasUrgentPlayerMessage())
+        if (state.hasUrgentPlayerMessage())
             return FlowLevel.OVERRIDE;
 
-        if (ctx.getTicksInCurrentLabel() > FLOW_STUCK_THRESHOLD)
+        if (state.getTicksInCurrentLabel() > FLOW_STUCK_THRESHOLD)
             return FlowLevel.OVERRIDE;
 
-        if (ctx.getTicksInCurrentLabel() > TIME_ESCALATION_TICKS) {
+        if (state.getTicksInCurrentLabel() > TIME_ESCALATION_TICKS) {
             double urgency = urgencyClassifier.computeUrgency(
-                    ctx.hormones(), ctx.bot(), ctx.getTicksInCurrentLabel());
+                    botCtx.hormonalSystem(), bot, state.getTicksInCurrentLabel());
             if (urgency > 0.5) return FlowLevel.OVERRIDE;
         }
 
         return FlowLevel.NORMAL;
     }
 
-    public void tick(MetaContext ctx, MinecraftServer server) {
-        ctx.incrementTickSinceLastLLM();
-        ctx.tickNovelEntities();
+    public void tick(BotContext botCtx, WorldContext worldCtx, ServerPlayerEntity bot, MetaState state, MinecraftServer server) {
+        state.incrementTickSinceLastLLM();
+        state.tickNovelEntities();
 
-        DriveState drives = motivationEngine.computeDrives(ctx);
-        Perspective perspective = motivationEngine.select(ctx, drives);
+        DriveState drives = motivationEngine.computeDrives(botCtx, worldCtx, bot);
+        Perspective perspective = motivationEngine.select(botCtx, drives);
 
-        ProblemLabel label = labelProblem(ctx, perspective);
-        ctx.setCurrentProblemLabel(label);
+        ProblemLabel label = labelProblem(botCtx, worldCtx, bot, perspective);
+        state.setCurrentProblemLabel(label);
 
-        FlowLevel flow = getFlowAdjustment(ctx);
+        FlowLevel flow = getFlowAdjustment(botCtx, bot, state);
 
-        temporalScaler.update(ctx.hormones(), ctx.bot(), ctx.getTicksInCurrentLabel());
+        temporalScaler.update(botCtx.hormonalSystem(), bot, state.getTicksInCurrentLabel());
 
         DispatchReflex.DispatchAction action = null;
-        if (ctx.dispatchReflex() != null) {
-            action = ctx.dispatchReflex().match(label, flow);
+        if (botCtx.dispatchReflex() != null) {
+            action = botCtx.dispatchReflex().match(label, flow);
         }
 
         if (action == null) {
             action = fallbackDispatch(label, flow);
         }
 
-        if (isLLMAction(action) && !shouldInvokeLLM(ctx, label, flow)) {
+        if (isLLMAction(action) && !shouldInvokeLLM(worldCtx, state, label, flow)) {
             AIPlayerMod.LOGGER.debug("[MetaScheduler] LLM gate denied: {} {}, falling back to HABIT", label, flow);
             action = new DispatchReflex.DispatchAction("HABIT", "llm_gate");
         }
 
-        boolean success = execute(action, ctx, server);
+        boolean success = execute(action, botCtx, worldCtx, bot, state, server);
 
-        if (ctx.dispatchReflex() != null) {
+        if (botCtx.dispatchReflex() != null) {
             if ("llm_gate".equals(action.reason())) {
-                ctx.dispatchReflex().recordGateEvent(success);
+                botCtx.dispatchReflex().recordGateEvent(success);
             }
-            ctx.dispatchReflex().recordOutcome(label, flow, action, success);
+            botCtx.dispatchReflex().recordOutcome(label, flow, action, success);
         }
 
-        ctx.hormones().tick();
+        botCtx.hormonalSystem().tick();
     }
 
     private boolean isLLMAction(DispatchReflex.DispatchAction action) {
         return action != null && "CORTEX_LLM".equals(action.layer());
     }
 
-    private boolean shouldInvokeLLM(MetaContext ctx, ProblemLabel label, FlowLevel flow) {
-        var aiClient = AIPlayerMod.getAIClient();
+    private boolean shouldInvokeLLM(WorldContext worldCtx, MetaState state, ProblemLabel label, FlowLevel flow) {
+        var aiClient = worldCtx.cortex().aiClient();
         if (aiClient == null || !aiClient.isConfigured()) return false;
-        if (ctx.getTickSinceLastLLM() < LLM_COOLDOWN_TICKS) return false;
-        if (ctx.hasRecentLLMFailure()) return false;
+        if (state.getTickSinceLastLLM() < LLM_COOLDOWN_TICKS) return false;
+        if (state.hasRecentLLMFailure()) return false;
         if (label != ProblemLabel.NOVEL && flow != FlowLevel.OVERRIDE) return false;
 
-        ILocalPlanner lp = ctx.localPlanner();
-        if (lp != null && lp.canHandle(ctx.lastPlayerMessage())) return false;
+        var lp = worldCtx.cortex().localPlanner();
+        if (lp != null && lp.canHandle(state.getLastPlayerMessage())) return false;
 
         return true;
     }
@@ -190,40 +197,39 @@ public class MetaScheduler {
         };
     }
 
-    private boolean execute(DispatchReflex.DispatchAction action, MetaContext ctx, MinecraftServer server) {
-        ServerPlayerEntity bot = ctx.bot();
+    private boolean execute(DispatchReflex.DispatchAction action, BotContext botCtx, WorldContext worldCtx, ServerPlayerEntity bot, MetaState state, MinecraftServer server) {
         if (bot == null) return false;
 
         switch (action.layer()) {
             case "INSTINCT" -> {
-                return executeInstinctLayer(ctx, bot);
+                return executeInstinctLayer(botCtx, worldCtx, bot);
             }
             case "HABIT" -> {
-                return executeHabitLayer(ctx, bot);
+                return executeHabitLayer(botCtx, state, bot);
             }
             case "CORTEX_LOCAL" -> {
-                return executeCortexLocal(ctx, bot);
+                return executeCortexLocal(botCtx, worldCtx, state, bot);
             }
             case "CORTEX_LLM" -> {
-                return executeCortexLLM(ctx, bot, server);
+                return executeCortexLLM(botCtx, worldCtx, state);
             }
             case "IDLE" -> {
-                return executeIdle(ctx, bot);
+                return executeIdle(botCtx, bot);
             }
         }
         return false;
     }
 
-    private boolean executeInstinctLayer(MetaContext ctx, ServerPlayerEntity bot) {
-        InnateReflexRegistry reg = ctx.reflexRegistry();
-        InhibitoryControl inhibitor = ctx.inhibitor();
-        OneShotAlarmSystem alarms = ctx.alarms();
+    private boolean executeInstinctLayer(BotContext botCtx, WorldContext worldCtx, ServerPlayerEntity bot) {
+        InnateReflexRegistry reg = worldCtx.brainstem().innateReflexes();
+        InhibitoryControl inhibitor = worldCtx.brainstem().inhibitor();
+        OneShotAlarmSystem alarms = botCtx.alarmSystem();
 
         if (reg != null) {
             InnateReflex safety = reg.highest(bot, 0);
             if (safety != null) {
                 if (inhibitor != null && inhibitor.shouldVetoSafety(safety, bot,
-                        null, AIPlayerMod.getBehaviorStats())) {
+                        null, worldCtx.behaviorStats())) {
                     AIPlayerMod.LOGGER.debug("[MetaScheduler] P0.5 veto safety: {}", safety.id());
                 } else {
                     dispatchReflexAction(bot, safety);
@@ -261,9 +267,9 @@ public class MetaScheduler {
         }
     }
 
-    private boolean executeHabitLayer(MetaContext ctx, ServerPlayerEntity bot) {
-        var conditioned = ctx.conditionedReflex();
-        var taskManager = ctx.taskManager();
+    private boolean executeHabitLayer(BotContext botCtx, MetaState state, ServerPlayerEntity bot) {
+        var conditioned = botCtx.conditionedReflex();
+        var taskManager = botCtx.taskManager();
         if (conditioned == null || taskManager == null) return false;
 
         Task activeTask = taskManager.getActiveTask();
@@ -275,7 +281,7 @@ public class MetaScheduler {
             }
         }
 
-        if (ctx.getP3Cooldown() <= 0) {
+        if (state.getP3Cooldown() <= 0) {
             var autoReflex = conditioned.scanAndTrigger(bot);
             if (autoReflex != null) {
                 conditioned.executeReflex(autoReflex, bot);
@@ -284,44 +290,44 @@ public class MetaScheduler {
         }
 
         if (correlationDetector != null) {
-            return correlationDetector.tryExplore(bot, ctx);
+            return correlationDetector.tryExplore(bot);
         }
         return false;
     }
 
-    private boolean executeCortexLocal(MetaContext ctx, ServerPlayerEntity bot) {
-        String msg = ctx.peekPendingChat();
+    private boolean executeCortexLocal(BotContext botCtx, WorldContext worldCtx, MetaState state, ServerPlayerEntity bot) {
+        String msg = state.getPendingChatMessage();
         if (msg == null) msg = AIPlayerMod.peekPendingChatMessage();
         if (msg == null) return false;
 
-        ILocalPlanner planner = ctx.localPlanner();
+        var planner = worldCtx.cortex().localPlanner();
 
         if (planner != null && planner.canHandle(msg)) {
-            ctx.consumePendingChat();
+            state.consumePendingChat();
             AIPlayerMod.consumePendingChat();
             var response = planner.decompose(msg);
             if (response != null && response.isAction()) {
-                var planManager = ctx.planManager();
+                var planManager = botCtx.planManager();
                 if (planManager != null) {
                     var plan = planManager.getActivePlan();
                     if (plan != null && !plan.subSteps.isEmpty()) {
-                        ctx.taskManager().createTaskFromPlan(msg, plan);
+                        botCtx.taskManager().createTaskFromPlan(msg, plan);
                         AIPlayerMod.LOGGER.info("[MetaScheduler] CortexLocal 从Plan创建任务: {} → {}步",
                                 msg, plan.subSteps.size());
                         return true;
                     }
                 }
-                ctx.taskManager().createTask(msg);
+                botCtx.taskManager().createTask(msg);
                 return true;
             }
         }
 
-        LocalChatHandler chatHandler = ctx.localChatHandler();
+        var chatHandler = worldCtx.cortex().chatHandler();
         if (chatHandler != null && chatHandler.canHandle(msg)) {
-            ctx.consumePendingChat();
+            state.consumePendingChat();
             AIPlayerMod.consumePendingChat();
-            UUID playerId = ctx.botId();
-            String response = chatHandler.getResponse(msg, ctx.hormones(), playerId);
+            UUID playerId = botCtx.botId();
+            String response = chatHandler.getResponse(msg, botCtx.hormonalSystem(), playerId);
             if (response != null) {
                 bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + response));
                 AIPlayerMod.LOGGER.info("[MetaScheduler] CortexLocal 本地聊天: \"{}\" → \"{}\"",
@@ -333,11 +339,11 @@ public class MetaScheduler {
         return false;
     }
 
-    private boolean executeCortexLLM(MetaContext ctx, ServerPlayerEntity bot, MinecraftServer server) {
-        var aiClient = AIPlayerMod.getAIClient();
+    private boolean executeCortexLLM(BotContext botCtx, WorldContext worldCtx, MetaState state) {
+        var aiClient = worldCtx.cortex().aiClient();
         if (aiClient == null || !aiClient.isConfigured()) return false;
 
-        String msg = ctx.consumePendingChat();
+        String msg = state.consumePendingChat();
         if (msg == null) {
             var pc = AIPlayerMod.consumePendingChat();
             if (pc == null) return false;
@@ -347,27 +353,27 @@ public class MetaScheduler {
         var aiChatHandler = AIPlayerMod.getAiChatHandler();
         if (aiChatHandler == null) return false;
 
-        ctx.resetTickSinceLastLLM();
+        state.resetTickSinceLastLLM();
         try {
             aiChatHandler.handleChat(msg,
-                    ctx.stateManager().loadState(),
-                    ctx.taskManager().getActiveTask(),
-                    ctx.memoryManager().getRecentMemories());
-            ctx.setRecentLLMFailure(false);
+                    botCtx.stateManager().loadState(),
+                    botCtx.taskManager().getActiveTask(),
+                    botCtx.memoryManager().getRecentMemories());
+            state.setRecentLLMFailure(false);
             return true;
         } catch (Exception e) {
             AIPlayerMod.LOGGER.warn("[MetaScheduler] LLM call failed: {}", e.getMessage());
-            ctx.setRecentLLMFailure(true);
+            state.setRecentLLMFailure(true);
             return false;
         }
     }
 
-    private boolean executeIdle(MetaContext ctx, ServerPlayerEntity bot) {
-        var idleBrain = ctx.idleBrain();
+    private boolean executeIdle(BotContext botCtx, ServerPlayerEntity bot) {
+        var idleBrain = botCtx.idleBrain();
         if (idleBrain != null) {
             var suggestion = idleBrain.onTick();
             if (suggestion != null) {
-                bot.sendMessage(net.minecraft.text.Text.literal("§b[AI_Assistant] §f" + suggestion.text()));
+                bot.sendMessage(Text.literal("§b[AI_Assistant] §f" + suggestion.text()));
                 return true;
             }
         }

@@ -1,5 +1,7 @@
 package com.izimi.aiplayermod;
 
+import com.izimi.aiplayermod.api.WorldContext;
+import com.izimi.aiplayermod.api.impl.WorldContextImpl;
 import com.izimi.aiplayermod.cortex.planner.PlanManager;
 import com.izimi.aiplayermod.cortex.planner.KnowledgeBase;
 import com.izimi.aiplayermod.cortex.planner.LocalTaskDecomposer;
@@ -93,6 +95,7 @@ public class AIPlayerMod implements ModInitializer {
     private static LocalChatHandler localChatHandler;
     private static BayesianModule bayesianModule;
     private static TemplateManager templateManager;
+    private static WorldContext worldContext;
 
     public record PendingChat(String message, String stateStr, String taskStr, String memsStr) {}
     private static PendingChat pendingChat;
@@ -160,6 +163,14 @@ public class AIPlayerMod implements ModInitializer {
         conditionedReflex.setBayesianModule(bayesianModule);
         socialClassifier = new NaiveBayesClassifier(thresholdConfig, bayesianModule);
         inhibitor = new InhibitoryControl();
+
+        worldContext = new WorldContextImpl(
+                reflexRegistry, actionAdapter, inhibitor,
+                socialObserver, familiarityTracker,
+                localTaskDecomposer, localChatHandler, templateManager, knowledgeBase, aiClient,
+                skillManager, behaviorStats, config
+        );
+        botManager.setWorldContext(worldContext);
 
         botController = new BotController(botSpawner, taskManager, taskExecutor, stateManager,
                 conditionedReflex, aiChatHandler, aiClient, idleBrain,

@@ -1,5 +1,9 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
+import com.izimi.aiplayermod.api.AmygdalaAPI;
+import com.izimi.aiplayermod.api.BotContext;
+import com.izimi.aiplayermod.api.BrainstemAPI;
+import com.izimi.aiplayermod.api.WorldContext;
 import com.izimi.aiplayermod.amygdala.BotParams;
 import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,29 +16,36 @@ import static org.mockito.Mockito.*;
 class MotivationEngineTest {
 
     private MotivationEngine engine;
-    private MetaContext ctx;
+    private BotContext ctx;
+    private WorldContext world;
+    private BrainstemAPI brainstem;
+    private AmygdalaAPI amygdala;
     private HormonalSystem hormones;
     private BotParams params;
 
     @BeforeEach
     void setUp() {
         engine = new MotivationEngine();
-        ctx = mock(MetaContext.class);
+        ctx = mock(BotContext.class);
+        world = mock(WorldContext.class);
+        brainstem = mock(BrainstemAPI.class);
+        amygdala = mock(AmygdalaAPI.class);
         hormones = new HormonalSystem();
         params = BotParams.generate();
 
-        when(ctx.bot()).thenReturn(null);
-        when(ctx.hormones()).thenReturn(hormones);
-        when(ctx.params()).thenReturn(params);
-        when(ctx.alarms()).thenReturn(null);
-        when(ctx.reflexRegistry()).thenReturn(null);
+        when(ctx.botParams()).thenReturn(params);
+        when(ctx.hormonalSystem()).thenReturn(hormones);
+        when(ctx.alarmSystem()).thenReturn(null);
         when(ctx.conditionedReflex()).thenReturn(null);
+        when(world.brainstem()).thenReturn(brainstem);
+        when(world.amygdala()).thenReturn(amygdala);
+        when(brainstem.innateReflexes()).thenReturn(null);
     }
 
     @Test
     @DisplayName("computeDrives returns non-null DriveState with all values >= 0")
     void driveStateAllNonNegative() {
-        DriveState drives = engine.computeDrives(ctx);
+        DriveState drives = engine.computeDrives(ctx, world, null);
         assertNotNull(drives);
         assertTrue(drives.survivalUrgency() >= 0);
         assertTrue(drives.taskUrgency() >= 0);
@@ -46,7 +57,7 @@ class MotivationEngineTest {
     @Test
     @DisplayName("computeDrives: all drives clamped to max 1.0")
     void drivesClampedToMax() {
-        DriveState drives = engine.computeDrives(ctx);
+        DriveState drives = engine.computeDrives(ctx, world, null);
         assertTrue(drives.survivalUrgency() <= 1.0);
         assertTrue(drives.taskUrgency() <= 1.0);
         assertTrue(drives.socialUrgency() <= 1.0);
@@ -57,7 +68,7 @@ class MotivationEngineTest {
     @Test
     @DisplayName("select returns non-null Perspective")
     void selectReturnsPerspective() {
-        DriveState drives = engine.computeDrives(ctx);
+        DriveState drives = engine.computeDrives(ctx, world, null);
         Perspective p = engine.select(ctx, drives);
         assertNotNull(p);
     }
@@ -68,7 +79,8 @@ class MotivationEngineTest {
         double highActivation = 0.8;
         double lowActivation = 0.1;
 
-        when(ctx.params()).thenReturn(new BotParams(0.3, 0.01, 0.1));
+        BotParams lowTemp = new BotParams(0.3, 0.01, 0.1);
+        when(ctx.botParams()).thenReturn(lowTemp);
 
         int highWins = 0;
         int lowWins = 0;
@@ -86,7 +98,8 @@ class MotivationEngineTest {
     @Test
     @DisplayName("Boltzmann: high temperature gives more exploration")
     void boltzmannHighTemperatureMoreRandom() {
-        when(ctx.params()).thenReturn(new BotParams(0.3, 0.01, 0.8));
+        BotParams highTemp = new BotParams(0.3, 0.01, 0.8);
+        when(ctx.botParams()).thenReturn(highTemp);
 
         int totalSelections = 1000;
         int[] counts = new int[Perspective.values().length];
@@ -105,7 +118,8 @@ class MotivationEngineTest {
     @Test
     @DisplayName("Cross-inhibition: successive select calls maintain inhibition state")
     void crossInhibitionSuccessiveSelects() {
-        when(ctx.params()).thenReturn(new BotParams(0.3, 0.01, 0.1));
+        BotParams lowTemp = new BotParams(0.3, 0.01, 0.1);
+        when(ctx.botParams()).thenReturn(lowTemp);
 
         DriveState ds = new DriveState(0.8, 0.7, 0, 0, 0);
         Perspective first = engine.select(ctx, ds);

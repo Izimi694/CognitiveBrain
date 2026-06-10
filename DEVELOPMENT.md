@@ -7,8 +7,8 @@
 ## 1. 当前状态
 
 ```
-项目阶段: Phase A — BayesianModule 地基完成
-Phase A-F ✅ 已完成
+项目阶段: Phase 1-2 — 接口解耦 + 依赖注入
+Phase 1-2 (Decoupling) ✅ 已完成
 ```
 
 ### 完成情况
@@ -32,6 +32,9 @@ Phase A-F ✅ 已完成
 | **Phase E** | **TemplateManager 模板填空统一入口 + 全局冷却** | ✅ |
 | **Phase RP** | **ReflexPackManager 反射包导入/导出/合并** | ✅ |
 | **Phase 7** | **繁衍模块 (三规则继承 + trial-first 脚手架)** | ✅ |
+| **Phase 1 (Decoupling)** | **api/ 接口定义 (WorldContext/BotContext/MetaState/BrainstemAPI/AmygdalaAPI/CortexAPI)** | ✅ |
+| **Phase 2 (Decoupling)** | **MetaScheduler 重构 (BotContext+WorldContext+MetaState 注入), CorrelationDetector 解耦** | ✅ |
+| **Phase 2.5 (Decoupling)** | **TemplateManagerTest (14 个测试), BayesianModuleTest (16 个测试)** | ✅ |
 
 ---
 
@@ -74,6 +77,9 @@ Phase 7 (繁衍) ── 三规则继承 (平均+脚手架 trial-first + 突变) 
 
 ### P-5: TemplateManager.fill() 未接入主循环
 TemplateManager 已实现但未被 MetaScheduler 调用。当前 L6 路径直接调用 `AIChatHandler.handleChat()`。远期目标：统一到 TemplateManager 作为唯一 LLM 出入口。
+
+### P-6: MetaContext 已弃用，BotController 待删除
+Phase 2 已将 MetaScheduler 和 CorrelationDetector 中的 `MetaContext` 依赖全部移除。`MetaContext` 已标记 `@Deprecated`。`BotController`（旧单 bot 路径）仍引用它，将在 Phase 3 随 BotController 一起物理删除。
 
 ---
 
@@ -122,6 +128,16 @@ cd AIPlayerMod-1.21.1-Fabric
 ```
 src/main/java/com/izimi/aiplayermod/
 ├── AIPlayerMod.java                  DI 入口
+├── api/                              跨脑区接口定义 (Phase 1 Decoupling)
+│   ├── WorldContext.java             世界级共享组件门面
+│   ├── BotContext.java               per-bot 组件门面
+│   ├── MetaState.java                每 tick 可变状态
+│   ├── BrainstemAPI.java             脑干门面
+│   ├── AmygdalaAPI.java              杏仁核门面
+│   └── CortexAPI.java                前额叶门面
+├── api/impl/                         实现类
+│   ├── WorldContextImpl.java
+│   └── BotContextImpl.java
 ├── bayesian/                         BayesianModule + value objects
 ├── hormonal/                         HormonalSystem (Phase F 移入)
 ├── cortex/                           前额叶
@@ -187,6 +203,8 @@ minecraft/ai_memory/
 | `MotivationEngineTest.java` | 19 | 驱力/玻尔兹曼/交叉抑制 |
 | `MetaContextStubTest.java` | 25 | MetaContext 查询/门控/环境检测 |
 | `BotParamsTest.java` | 7 | 三规则继承/参数范围/变异 |
-| **合计** | **~109** | **全部通过** |
+| `BayesianModuleTest.java` | 16 | 三层存储/概率预测/收敛判断/FileSystem注入 |
+| `TemplateManagerTest.java` | 14 | 模板填空/解析/钩子/速率限制/异常传播 |
+| **合计** | **~139** | **全部通过** |
 
-**待补充测试：** `BayesianModule`, `TemplateManager`, `ChatSessionManager`
+**待补充测试：** `ChatSessionManager`

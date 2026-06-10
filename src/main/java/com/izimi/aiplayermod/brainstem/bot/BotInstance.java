@@ -3,6 +3,10 @@ package com.izimi.aiplayermod.brainstem.bot;
 import java.util.UUID;
 
 import com.izimi.aiplayermod.AIPlayerMod;
+import com.izimi.aiplayermod.api.BotContext;
+import com.izimi.aiplayermod.api.MetaState;
+import com.izimi.aiplayermod.api.WorldContext;
+import com.izimi.aiplayermod.api.impl.BotContextImpl;
 import com.izimi.aiplayermod.amygdala.BotParams;
 import com.izimi.aiplayermod.amygdala.ConditionedReflex;
 import com.izimi.aiplayermod.amygdala.DispatchReflex;
@@ -17,6 +21,7 @@ import com.izimi.aiplayermod.brainstem.scheduler.MetaContext;
 import com.izimi.aiplayermod.brainstem.scheduler.MetaScheduler;
 import com.izimi.aiplayermod.brainstem.scheduler.MotivationEngine;
 import com.izimi.aiplayermod.cortex.api.AITaskPlanner;
+import com.izimi.aiplayermod.cortex.chat.ChatSessionManager;
 import com.izimi.aiplayermod.cortex.planner.PlanManager;
 import com.izimi.aiplayermod.cortex.task.TaskExecutor;
 import com.izimi.aiplayermod.cortex.task.TaskManager;
@@ -32,6 +37,9 @@ public class BotInstance {
     private final UUID botId;
     private final String botName;
     private final BotPlayer botPlayer;
+
+    private BotContext botContext;
+    private WorldContext worldContext;
 
     // Per-bot components
     private final BotParams botParams;
@@ -58,13 +66,18 @@ public class BotInstance {
     private boolean deathGenomeSaved = false;
 
     public BotInstance(UUID botId, String botName, BotPlayer botPlayer) {
-        this(botId, botName, botPlayer, null);
+        this(botId, botName, botPlayer, null, null);
     }
 
     public BotInstance(UUID botId, String botName, BotPlayer botPlayer, BotParams inheritedParams) {
+        this(botId, botName, botPlayer, inheritedParams, null);
+    }
+
+    public BotInstance(UUID botId, String botName, BotPlayer botPlayer, BotParams inheritedParams, WorldContext worldContext) {
         this.botId = botId;
         this.botName = botName;
         this.botPlayer = botPlayer;
+        this.worldContext = worldContext;
 
         var config = AIPlayerMod.getConfig();
         var skillManager = AIPlayerMod.getSkillManager();
@@ -97,6 +110,20 @@ public class BotInstance {
         this.idleBrain = new IdleBrain(taskManager, skillManager);
         this.metaScheduler.setCorrelationDetector(correlationDetector);
 
+        if (worldContext != null) {
+            this.botContext = new BotContextImpl(
+                    botId, botName, worldContext,
+                    botParams, hormonalSystem,
+                    conditionedReflex, alarms,
+                    bayesianModule, dispatchReflex,
+                    taskManager, taskExecutor,
+                    stateManager, memoryManager,
+                    planManager, idleBrain,
+                    correlationDetector, learningSystem,
+                    new ChatSessionManager(bayesianModule, botId)
+            );
+        }
+
         this.metaContext = new MetaContext(
                 botId, botName, botParams, hormonalSystem, alarms,
                 conditionedReflex, dispatchReflex, reflexRegistry, inhibitor,
@@ -123,7 +150,8 @@ public class BotInstance {
 
         tickCounter++;
 
-        metaScheduler.tick(metaContext, server);
+        MetaState state = new MetaState();
+        metaScheduler.tick(botContext, worldContext, bot, state, server);
 
         hormonalSystem.tick();
 
@@ -146,6 +174,7 @@ public class BotInstance {
     }
 
     // Per-bot component getters
+    public BotContext getBotContext() { return botContext; }
     public UUID getBotId() { return botId; }
     public String getBotName() { return botName; }
     public BotPlayer getBotPlayer() { return botPlayer; }

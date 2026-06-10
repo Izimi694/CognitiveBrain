@@ -1,6 +1,10 @@
 package com.izimi.aiplayermod.brainstem.scheduler;
 
+import com.izimi.aiplayermod.api.BotContext;
+import com.izimi.aiplayermod.api.WorldContext;
 import com.izimi.aiplayermod.amygdala.BotParams;
+import com.izimi.aiplayermod.brainstem.innate.InnateReflexRegistry;
+import com.izimi.aiplayermod.cortex.task.Task;
 import com.izimi.aiplayermod.hormonal.HormonalSystem;
 import net.minecraft.server.network.ServerPlayerEntity;
 
@@ -21,9 +25,8 @@ public class MotivationEngine {
 
     private static final double CROSS_INHIBITION_RATIO = 0.7;
     private static final int INHIBITION_WINDOW = 5;
-    private static final double EXPLORE_THRESHOLD = 1.0 / Math.E; // 37% 探索边界
+    private static final double EXPLORE_THRESHOLD = 1.0 / Math.E;
 
-    /** 基于 1/e 法则的探索决策: curiosity > maxCuriosity × (1/e) 时探索 */
     public static boolean shouldExplore(HormonalSystem hormones) {
         if (hormones == null) return false;
         double maxCuriosity = 0.95;
@@ -35,21 +38,20 @@ public class MotivationEngine {
     private Perspective lastWinner = null;
     private int inhibitionTicks = 0;
 
-    public DriveState computeDrives(MetaContext ctx) {
-        ServerPlayerEntity bot = ctx.bot();
-        HormonalSystem h = ctx.hormones();
-        BotParams params = ctx.params();
+    public DriveState computeDrives(BotContext ctx, WorldContext world, ServerPlayerEntity bot) {
+        HormonalSystem h = ctx.hormonalSystem();
+        BotParams params = ctx.botParams();
 
-        double survivalUrgency = computeSurvivalDrive(ctx, bot, h);
+        double survivalUrgency = computeSurvivalDrive(ctx, world, bot, h);
         double taskUrgency = computeTaskDrive(ctx, bot);
-        double socialUrgency = computeSocialDrive(ctx, h);
+        double socialUrgency = computeSocialDrive(ctx, world, h);
         double curiosityUrgency = computeCuriosityDrive(ctx, h);
         double cautiousUrgency = computeCautiousDrive(ctx, h, params);
 
         return new DriveState(survivalUrgency, taskUrgency, socialUrgency, curiosityUrgency, cautiousUrgency);
     }
 
-    public Perspective select(MetaContext ctx, DriveState drives) {
+    public Perspective select(BotContext ctx, DriveState drives) {
         Perspective[] values = Perspective.values();
         double[] activations = new double[values.length];
 
@@ -60,7 +62,7 @@ public class MotivationEngine {
             }
         }
 
-        double temperature = Math.max(0.05, ctx.params().getTemperature());
+        double temperature = Math.max(0.05, ctx.botParams().getTemperature());
         Perspective winner = boltzmannSample(activations, values, temperature);
 
         if (lastWinner == winner) {
@@ -97,36 +99,39 @@ public class MotivationEngine {
         return values[values.length - 1];
     }
 
-    private double computeSurvivalDrive(MetaContext ctx, ServerPlayerEntity bot, HormonalSystem h) {
+    private double computeSurvivalDrive(BotContext ctx, WorldContext world, ServerPlayerEntity bot, HormonalSystem h) {
         double drive = 0;
         if (bot != null) {
             double healthRatio = 1.0 - (bot.getHealth() / bot.getMaxHealth());
             drive += W_SURVIVAL * healthRatio;
             if (h.getStress() > 0.3) drive += W_STRESS * h.getStress();
-            if (ctx.alarms() != null && ctx.alarms().hasThreatMatchNearby(bot)) drive += W_FEAR;
-            if (ctx.reflexRegistry() != null && ctx.reflexRegistry().highest(bot, 0) != null) drive += 0.4;
+            if (ctx.alarmSystem() != null && ctx.alarmSystem().hasThreatMatchNearby(bot)) drive += W_FEAR;
+            InnateReflexRegistry innate = world.brainstem().innateReflexes();
+            if (innate != null && innate.highest(bot, 0) != null) drive += 0.4;
         }
         if (h.getStress() > 0.7) drive += 0.3;
         return Math.min(1.0, drive);
     }
 
-    private double computeTaskDrive(MetaContext ctx, ServerPlayerEntity bot) {
+    private double computeTaskDrive(BotContext ctx, ServerPlayerEntity bot) {
         double drive = 0;
-        var task = ctx.activeTask();
+        var tm = ctx.taskManager();
+        Task task = tm != null ? tm.getActiveTask() : null;
         if (task != null && "running".equals(task.getStatus())) {
             drive += W_TASK_BASE;
             double prog = (double) task.progress.completedCount / Math.max(1, task.progress.targetCount);
             drive += W_TASK_PROG * prog;
         }
-        if (ctx.hasHighProficiencyReflex(bot)) {
+        if (ctx.conditionedReflex() != null && ctx.conditionedReflex().getHighestProficiency() >= 0.8) {
             drive += 0.2;
         }
         return Math.min(1.0, drive);
     }
 
-    private double computeSocialDrive(MetaContext ctx, HormonalSystem h) {
+    private double computeSocialDrive(BotContext ctx, WorldContext world, HormonalSystem h) {
         double drive = 0;
-        if (ctx.hasGroupActivity()) {
+        var social = world.amygdala().socialObserver();
+        if (social != null && social.getNearbyPlayerCount() > 1) {
             drive += W_SOCIAL;
         }
         double avgIntimacy = 0;
@@ -141,16 +146,16 @@ public class MotivationEngine {
         return Math.min(1.0, drive);
     }
 
-    private double computeCuriosityDrive(MetaContext ctx, HormonalSystem h) {
+    private double computeCuriosityDrive(BotContext ctx, HormonalSystem h) {
         double curiosity = h.getCuriosity();
-        double threshold = h.getCuriosityThreshold(ctx.params().getBeta(), h.getStress());
+        double threshold = h.getCuriosityThreshold(ctx.botParams().getBeta(), h.getStress());
         if (curiosity > threshold) {
             return Math.min(1.0, curiosity);
         }
         return curiosity * 0.3;
     }
 
-    private double computeCautiousDrive(MetaContext ctx, HormonalSystem h, BotParams params) {
+    private double computeCautiousDrive(BotContext ctx, HormonalSystem h, BotParams params) {
         double drive = 0;
         drive += W_CAUTIOUS * params.getBeta() * 10;
         var conditioned = ctx.conditionedReflex();

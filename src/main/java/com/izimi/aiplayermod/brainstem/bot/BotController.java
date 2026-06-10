@@ -72,14 +72,6 @@ public class BotController {
 
         ServerPlayerEntity bot = botPlayer.asEntity();
 
-        if (metaScheduler != null && metaContext != null) {
-            metaScheduler.tick(metaContext, server);
-            if (tickCounter % stateSaveInterval == 0) {
-                stateManager.saveState(bot);
-            }
-            return;
-        }
-
         if (tickCounter % stateSaveInterval == 0) {
             stateManager.saveState(bot);
         }

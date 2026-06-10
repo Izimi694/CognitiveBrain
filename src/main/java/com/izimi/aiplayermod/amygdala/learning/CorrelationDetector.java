@@ -1,21 +1,31 @@
 package com.izimi.aiplayermod.amygdala.learning;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+
 import com.izimi.aiplayermod.AIPlayerMod;
 import com.izimi.aiplayermod.amygdala.ConditionedReflex;
 import com.izimi.aiplayermod.bayesian.BayesianModule;
 import com.izimi.aiplayermod.brainstem.adapter.BasicActionAdapter;
-import com.izimi.aiplayermod.brainstem.scheduler.MetaContext;
 import com.izimi.aiplayermod.brainstem.skill.SkillManager;
 import com.izimi.aiplayermod.util.FileUtil;
 import com.izimi.aiplayermod.util.JsonUtil;
+
 import net.minecraft.block.BlockState;
 import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
-
-import java.util.*;
 
 public class CorrelationDetector {
 
@@ -26,7 +36,6 @@ public class CorrelationDetector {
 
     private final SkillManager skillManager;
     private final BasicActionAdapter adapter;
-    private BayesianModule bayesianModule;
     private final Deque<TrialRecord> recentTrials = new ArrayDeque<>();
     private int cooldown = 0;
 
@@ -37,11 +46,11 @@ public class CorrelationDetector {
         this.adapter = adapter;
     }
 
+    @SuppressWarnings("unused")
     public void setBayesianModule(BayesianModule bayesianModule) {
-        this.bayesianModule = bayesianModule;
     }
 
-    public boolean tryExplore(ServerPlayerEntity bot, MetaContext ctx) {
+    public boolean tryExplore(ServerPlayerEntity bot) {
         if (cooldown > 0) { cooldown--; return false; }
         if (adapter == null || bot == null) return false;
 
@@ -49,7 +58,7 @@ public class CorrelationDetector {
         if (action == null) return false;
 
         String target = pickTargetFor(action, bot);
-        String contextFp = fingerprint(bot, ctx);
+        String contextFp = fingerprint(bot);
 
         boolean success = executeTrial(action, target, bot);
         if (!success && action.equals("dig")) {
@@ -105,7 +114,7 @@ public class CorrelationDetector {
         };
     }
 
-    private String fingerprint(ServerPlayerEntity bot, MetaContext ctx) {
+    private String fingerprint(ServerPlayerEntity bot) {
         StringBuilder sb = new StringBuilder();
         sb.append("hp:").append((int) bot.getHealth()).append(",");
         sb.append("food:").append(bot.getHungerManager().getFoodLevel()).append(",");

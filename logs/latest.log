@@ -1,0 +1,2 @@
+[23:28:04] [Test worker/WARN]: [TemplateManager] 填空解析失败: EVALUATION_BATCH - Expected a com.google.gson.JsonObject but was com.google.gson.JsonArray; at path $
+[23:28:04] [Test worker/WARN]: [TemplateManager] 填空解析失败: REFLEX_CREATE - com.google.gson.stream.MalformedJsonException: Expected ':' at line 1 column 7 path $.not

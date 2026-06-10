@@ -1,6 +1,7 @@
 package com.izimi.aiplayermod.brainstem.bot;
 
 import com.izimi.aiplayermod.AIPlayerMod;
+import com.izimi.aiplayermod.api.WorldContext;
 import com.izimi.aiplayermod.amygdala.BotParams;
 import com.izimi.aiplayermod.brainstem.adapter.TemporalScaler;
 import com.izimi.aiplayermod.util.FileUtil;
@@ -20,6 +21,11 @@ import java.util.stream.Collectors;
 
 public class BotManager {
     private final Map<UUID, BotInstance> bots = new LinkedHashMap<>();
+    private WorldContext worldContext;
+
+    public void setWorldContext(WorldContext ctx) {
+        this.worldContext = ctx;
+    }
 
     public BotInstance spawn(String name, MinecraftServer server, ServerWorld world, Vec3d position) {
         return spawn(name, server, world, position, true);
@@ -55,7 +61,7 @@ public class BotManager {
             }
         }
 
-        BotInstance instance = new BotInstance(botId, name, botPlayer, childParams);
+        BotInstance instance = new BotInstance(botId, name, botPlayer, childParams, worldContext);
 
         FileUtil.getBotDir(botId).toFile().mkdirs();
 

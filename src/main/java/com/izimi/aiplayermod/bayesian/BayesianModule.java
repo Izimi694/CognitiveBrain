@@ -13,13 +13,21 @@ import java.util.stream.Collectors;
 
 import com.izimi.aiplayermod.util.FileUtil;
 import com.izimi.aiplayermod.util.JsonUtil;
+import com.izimi.aiplayermod.util.api.FileSystem;
 
 public class BayesianModule {
 
     // ── Layer 1: Global shared prior P(success) per reflexId ──
     private static final Map<String, Double> sharedPrior = new HashMap<>();
-    private static final Path sharedPriorPath = FileUtil.getBayesianDir().resolve("shared_prior.json");
+    private static Path sharedPriorPath;
     private static boolean sharedPriorLoaded = false;
+
+    private static Path getSharedPriorPath() {
+        if (sharedPriorPath == null) {
+            sharedPriorPath = FileUtil.getBayesianDir().resolve("shared_prior.json");
+        }
+        return sharedPriorPath;
+    }
 
     // ── Layer 2: Per-bot posterior P(featureValue | outcome) ──
     // featureKey → {"success": count, "failure": count}
@@ -29,10 +37,14 @@ public class BayesianModule {
     private String anchoringContext = "";
 
     // ── Per-bot posterior persistence path ──
-    private final Path posteriorPath;
+    private Path posteriorPath;
 
     // ── Per-bot convergence tracking ──
     private final Map<String, PosteriorSnapshot> convergenceHistory = new HashMap<>();
+
+    // ── Optional FileSystem injection for testability ──
+    private final FileSystem fileSystem;
+    private final UUID botId;
 
     // ── Constants ──
     private static final double PRIOR_LEARNING_RATE = 0.1;
@@ -41,17 +53,28 @@ public class BayesianModule {
     private static final double CONVERGENCE_THRESHOLD = 1.0 / Math.E; // ≈ 0.3679
 
     public BayesianModule(UUID botId) {
-        this.posteriorPath = FileUtil.getBotBayesianDir(botId).resolve("posterior.json");
-        loadSharedPrior();
-        loadPosterior();
+        this(botId, null);
+    }
+
+    public BayesianModule(UUID botId, FileSystem fileSystem) {
+        this.fileSystem = fileSystem;
+        this.botId = botId;
+        if (fileSystem != null) {
+            this.posteriorPath = Path.of("memory", botId.toString(), "posterior.json");
+        } else {
+            loadSharedPrior();
+            this.posteriorPath = FileUtil.getBotBayesianDir(botId).resolve("posterior.json");
+            loadPosterior();
+        }
     }
 
     // ── Shared prior (loaded once from disk) ──
 
     private static synchronized void loadSharedPrior() {
         if (sharedPriorLoaded) return;
-        if (FileUtil.fileExists(sharedPriorPath)) {
-            Map<String, Object> raw = JsonUtil.readMapFromFileSafe(sharedPriorPath);
+        Path path = getSharedPriorPath();
+        if (FileUtil.fileExists(path)) {
+            Map<String, Object> raw = JsonUtil.readMapFromFileSafe(path);
             if (raw != null) {
                 for (var entry : raw.entrySet()) {
                     sharedPrior.put(entry.getKey(), ((Number) entry.getValue()).doubleValue());
@@ -61,8 +84,13 @@ public class BayesianModule {
         sharedPriorLoaded = true;
     }
 
+    public static synchronized void resetSharedState() {
+        sharedPrior.clear();
+        sharedPriorLoaded = false;
+    }
+
     public static synchronized void saveSharedPrior() {
-        JsonUtil.writeToFileSafeAtomic(sharedPriorPath, sharedPrior);
+        JsonUtil.writeToFileSafeAtomic(getSharedPriorPath(), sharedPrior);
     }
 
     // ── Per-bot posterior persistence ──
@@ -85,8 +113,11 @@ public class BayesianModule {
     }
 
     public void savePosterior() {
-        Map<String, Map<String, Integer>> serializable = new HashMap<>(featureGivenOutcome);
-        JsonUtil.writeToFileSafeAtomic(posteriorPath, serializable);
+        if (fileSystem != null) {
+            fileSystem.writeJson(posteriorPath, new HashMap<>(featureGivenOutcome));
+        } else if (posteriorPath != null) {
+            JsonUtil.writeToFileSafeAtomic(posteriorPath, new HashMap<>(featureGivenOutcome));
+        }
     }
 
     // ── Public API: Prediction ──

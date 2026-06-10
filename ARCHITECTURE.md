@@ -35,15 +35,16 @@ L6  → 复杂语义分析 (以上全不命中)
 
 ## 2. MetaScheduler — 元调度器
 
-每 tick 的决策分四阶段：
+每 tick 的决策分五阶段：
 
 ```
 MetaScheduler.tick()
-  1. selectPerspective()        ← 5视角 (SURVIVAL/TASK/SOCIAL/CURIOUS/CAUTIOUS)
-                                  激素状态 + BotParams + 环境 → 玻尔兹曼选择
-  2. labelProblem(perspective)  ← 贴标签: SURVIVAL/LEARNED_THREAT/TASK_ACTIVE/ROUTINE/FAMILIAR/NOVEL/TRIVIAL
-  3. getFlowAdjustment(ctx)     ← 升降级: AUTOPILOT/NORMAL/OVERRIDE
-  4. dispatch(label, flow)      ← 分派到对应执行层
+  1. computeDrives()            ← 5通道驱力计算 (BotContext + WorldContext + 环境)
+                                   激素状态 + BotParams + 环境 → 5维 DriveState
+  2. select()                   ← 玻尔兹曼选择 + 交叉抑制 (BotContext)
+  3. labelProblem(perspective)  ← 贴标签: SURVIVAL/LEARNED_THREAT/TASK_ACTIVE/ROUTINE/FAMILIAR/NOVEL/TRIVIAL
+  4. getFlowAdjustment(bot, state) ← 升降级: AUTOPILOT/NORMAL/OVERRIDE (BotContext + MetaState)
+  5. dispatch(label, flow)      ← 分派到对应执行层
 ```
 
 ### 2.1 五大视角 (Perspective)
@@ -472,6 +473,12 @@ copyReflexesFromMentor()
 | BehaviorStats | 骨架 | 内存 |
 | ChatSessionManager | 骨架 (cortex/chat) | 内存窗口 |
 | ReflexPackManager | 骨架 (brainstem/bot) | `reflex_packs/*.json` |
+| WorldContext | 骨架 (api) | `WorldContext` 接口 / `WorldContextImpl` |
+| BotContext | 骨架 (api) | `BotContext` 接口 / `BotContextImpl` |
+| MetaState | 骨架 (api) | `MetaState` 类（每 tick 新建） |
+| BrainstemAPI | 骨架 (api) | 脑干门面接口（innateReflexes/basicActions/inhibitor） |
+| AmygdalaAPI | 骨架 (api) | 杏仁核门面接口（socialObserver/familiarityTracker） |
+| CortexAPI | 骨架 (api) | 前额叶门面接口（localPlanner/chatHandler/templateManager/aiClient） |
 
 ---
 
