@@ -7,6 +7,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -339,5 +341,213 @@ class MemoryGraphTest {
         assertNotNull(MemoryEdge.RelationType.valueOf("TEMPORAL"));
         assertNotNull(MemoryEdge.RelationType.valueOf("SIMILARITY"));
         assertNotNull(MemoryEdge.RelationType.valueOf("CONTRAST"));
+    }
+
+    // ── Phase 1: reinforcePath ──
+
+    @Test
+    @DisplayName("reinforcePath strengthens existing edge with positive delta")
+    void reinforcePathStrengthensExistingEdge() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.SIMILARITY, 0.5);
+
+        graph.reinforcePath(List.of("mem_001", "mem_002"), 0.5);
+
+        assertEquals(0.55, graph.getEdges().get(0).weight(), 0.001);
+    }
+
+    @Test
+    @DisplayName("reinforcePath creates new SIMILARITY edge when none exists")
+    void reinforcePathCreatesNewEdge() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+
+        graph.reinforcePath(List.of("mem_001", "mem_002"), 0.5);
+
+        assertEquals(1, graph.edgeCount());
+        assertEquals(MemoryEdge.RelationType.SIMILARITY, graph.getEdges().get(0).type());
+        assertEquals(0.325, graph.getEdges().get(0).weight(), 0.001);
+        // 0.3 + 0.5*0.05 = 0.325
+    }
+
+    @Test
+    @DisplayName("reinforcePath with negative delta weakens existing edge")
+    void reinforcePathNegativeDelta() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.CAUSAL, 0.8);
+
+        graph.reinforcePath(List.of("mem_001", "mem_002"), -0.5);
+
+        assertEquals(0.75, graph.getEdges().get(0).weight(), 0.001);
+    }
+
+    @Test
+    @DisplayName("reinforcePath with single element does nothing")
+    void reinforcePathSingleElement() {
+        graph.reinforcePath(List.of("mem_001"), 0.5);
+        assertEquals(0, graph.edgeCount());
+    }
+
+    // ── Phase 1: findNodeIdsByReflex ──
+
+    @Test
+    @DisplayName("findNodeIdsByReflex returns ids from index")
+    void findNodeIdsByReflexReturnsIds() {
+        graph.setReflexToNodes(Map.of("mine", List.of("mem_001", "mem_002"),
+                "craft", List.of("mem_002")));
+
+        List<String> result = graph.findNodeIdsByReflex("reflex_mine_iron");
+        assertEquals(2, result.size());
+    }
+
+    @Test
+    @DisplayName("findNodeIdsByReflex returns empty list for unknown reflex")
+    void findNodeIdsByReflexUnknown() {
+        graph.setReflexToNodes(Map.of("mine", List.of("mem_001")));
+        assertTrue(graph.findNodeIdsByReflex("reflex_unknown").isEmpty());
+    }
+
+    // ── Phase 2: traverse with activation decay ──
+
+    @Test
+    @DisplayName("traverse with minWeight respects depth limit")
+    void traverseMinWeightDepthLimit() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        MemoryEntry c = entry("mem_003", "C", 3000, 1, null, null);
+        MemoryEntry d = entry("mem_004", "D", 4000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addNode(c);
+        graph.addNode(d);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.TEMPORAL, 0.8);
+        graph.addEdge("mem_002", "mem_003", MemoryEdge.RelationType.TEMPORAL, 0.8);
+        graph.addEdge("mem_003", "mem_004", MemoryEdge.RelationType.TEMPORAL, 0.8);
+
+        Set<String> result = graph.traverse("mem_001", MemoryEdge.RelationType.TEMPORAL, 2, 0.1);
+        // depth=2 means 2 hops: mem_001 → mem_002 (hop1), mem_002 → mem_003 (hop2)
+        // mem_004 at hop3, excluded
+        assertEquals(2, result.size());
+        assertTrue(result.contains("mem_002"));
+        assertTrue(result.contains("mem_003"));
+    }
+
+    @Test
+    @DisplayName("traverse with minWeight filters low-weight edges")
+    void traverseMinWeightFilter() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        MemoryEntry c = entry("mem_003", "C", 3000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addNode(c);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.SIMILARITY, 0.9);
+        graph.addEdge("mem_002", "mem_003", MemoryEdge.RelationType.SIMILARITY, 0.2);
+
+        Set<String> result = graph.traverse("mem_001", MemoryEdge.RelationType.SIMILARITY, 3, 0.5);
+        assertEquals(1, result.size());
+        assertTrue(result.contains("mem_002"));
+    }
+
+    @Test
+    @DisplayName("traverse with minWeight returns empty for unknown start")
+    void traverseMinWeightUnknown() {
+        Set<String> result = graph.traverse("unknown", null, 3, 0.1);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    @DisplayName("traverse with minWeight respects relation type filter")
+    void traverseMinWeightTypeFilter() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        MemoryEntry c = entry("mem_003", "C", 3000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addNode(c);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.CAUSAL, 0.8);
+        graph.addEdge("mem_002", "mem_003", MemoryEdge.RelationType.SIMILARITY, 0.8);
+
+        Set<String> result = graph.traverse("mem_001", MemoryEdge.RelationType.CAUSAL, 3, 0.1);
+        assertEquals(1, result.size());
+        assertTrue(result.contains("mem_002"));
+    }
+
+    // ── Phase 3: skeleton export/import ──
+
+    @Test
+    @DisplayName("exportSkeleton only keeps nodes with enough incident edges")
+    void exportSkeletonFilters() {
+        MemoryEntry a = entry("mem_001", "挖到钻石 at (100,64,200)", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "用钻石做工具", 2000, 1, null, null);
+        MemoryEntry c = entry("mem_003", "孤立事件", 3000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addNode(c);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.CAUSAL, 0.8);
+        graph.addEdge("mem_002", "mem_001", MemoryEdge.RelationType.SIMILARITY, 0.6);
+        // mem_003 has no edges → excluded
+
+        Map<String, Object> skeleton = graph.exportSkeleton();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> nodes = (List<Map<String, Object>>) skeleton.get("skeleton_nodes");
+        assertNotNull(nodes);
+        assertEquals(2, nodes.size());
+    }
+
+    @Test
+    @DisplayName("importSkeleton merges edges with max weight")
+    void importSkeletonMergesEdges() {
+        MemoryEntry a = entry("mem_001", "挖矿", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "熔炼", 2000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.CAUSAL, 0.6);
+
+        Map<String, Object> skeleton = Map.of(
+                "skeleton_nodes", List.of(
+                        Map.of("label", "挖矿"),
+                        Map.of("label", "熔炼")
+                ),
+                "skeleton_edges", List.of(
+                        Map.of("from", "mem_001", "to", "mem_002", "type", "CAUSAL", "weight", 0.9)
+                )
+        );
+
+        graph.importSkeleton(skeleton);
+        assertEquals(1, graph.edgeCount());
+        assertEquals(0.9, graph.getEdges().get(0).weight(), 0.001);
+    }
+
+    @Test
+    @DisplayName("deinstanceLabel removes position and timestamp from summary")
+    void deinstanceLabelCleansSummary() {
+        assertEquals("挖到钻石", MemoryGraph.deinstanceLabel("挖到钻石 at (100,64,200)"));
+        assertEquals("发现矿洞", MemoryGraph.deinstanceLabel("发现矿洞 14:30:00"));
+        assertEquals("完成目标", MemoryGraph.deinstanceLabel("完成目标 2024-01-15"));
+        assertEquals("hello", MemoryGraph.deinstanceLabel("hello"));
+    }
+
+    @Test
+    @DisplayName("reinforcePath keeps edge weight above minimum")
+    void reinforcePathClampsBelowMinimum() {
+        MemoryEntry a = entry("mem_001", "A", 1000, 1, null, null);
+        MemoryEntry b = entry("mem_002", "B", 2000, 1, null, null);
+        graph.addNode(a);
+        graph.addNode(b);
+        graph.addEdge("mem_001", "mem_002", MemoryEdge.RelationType.SIMILARITY, 0.5);
+
+        // Large negative delta should not push below 0.1
+        graph.reinforcePath(List.of("mem_001", "mem_002"), -10.0);
+
+        assertEquals(0.1, graph.getEdges().get(0).weight(), 0.001);
     }
 }

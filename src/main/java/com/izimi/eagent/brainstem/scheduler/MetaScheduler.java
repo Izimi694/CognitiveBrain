@@ -26,8 +26,14 @@ import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import com.izimi.eagent.hippocampus.MemoryEntry;
+import com.izimi.eagent.hippocampus.MemoryEdge;
+import com.izimi.eagent.hippocampus.MemoryGraph;
+import com.izimi.eagent.hippocampus.MemoryManager;
 
 public class MetaScheduler {
 
@@ -225,12 +231,17 @@ public class MetaScheduler {
 
             if (conditioned == null) break;
 
-            // 激素粗筛 (candidate generation)
+            // 激素粗筛 + 图扩散 (candidate generation)
             String candidateReflex = reflexId != null ? reflexId : conditioned.getLastExecutedReflexId();
             if (candidateReflex == null) {
                 var autoReflex = conditioned.scanAndTrigger(bot);
-                if (autoReflex == null) break;
-                candidateReflex = autoReflex.getSkillId();
+                if (autoReflex == null) {
+                    // 路3: 图扩散激活
+                    candidateReflex = getGraphActivatedCandidate(botCtx);
+                    if (candidateReflex == null) break;
+                } else {
+                    candidateReflex = autoReflex.getSkillId();
+                }
             }
 
             // DAG 依赖检查 + 参数绑定 + 前置条件门控
@@ -279,6 +290,34 @@ public class MetaScheduler {
             // 进度推进 → 下一轮
             reflexId = null;
         }
+    }
+
+    private String getGraphActivatedCandidate(BotContext botCtx) {
+        MemoryManager mem = botCtx.memoryManager();
+        if (mem == null) return null;
+        MemoryGraph mg = mem.getMemoryGraph();
+        if (mg == null) return null;
+
+        List<MemoryEntry> recent = mem.getRecentMemories();
+        if (recent.isEmpty()) return null;
+        List<String> seedIds = recent.stream().limit(3).map(e -> e.id).toList();
+
+        Set<String> activated = new LinkedHashSet<>();
+        for (String seed : seedIds) {
+            activated.addAll(mg.traverse(seed, MemoryEdge.RelationType.SIMILARITY, 2, 0.5));
+        }
+        if (activated.isEmpty()) return null;
+
+        for (String nodeId : activated) {
+            MemoryEntry entry = mem.getEntry(nodeId);
+            if (entry != null && entry.relatedSkills != null) {
+                for (String skill : entry.relatedSkills) {
+                    double conf = botCtx.conditionedReflex().getConfidence(skill);
+                    if (conf > 0.1) return skill;
+                }
+            }
+        }
+        return null;
     }
 
     private boolean isLLMAction(DispatchReflex.DispatchAction action) {

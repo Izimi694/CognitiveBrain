@@ -21,6 +21,7 @@ public class MemoryGraph {
     private transient long lastMemoryTimestamp = 0;
     private transient long totalIntervalMs = 0;
     private transient int intervalCount = 0;
+    private transient final Map<String, List<String>> reflexToNodes = new HashMap<>();
     private int lastSavedDay = 0;
 
     // ── Node CRUD ──
@@ -28,12 +29,19 @@ public class MemoryGraph {
     public void addNode(MemoryEntry entry) {
         if (entry == null || entry.id == null) return;
         nodes.put(entry.id, new MemoryNode(entry.id, entry.summary, entry.timestamp, entry.gameDay));
+        if (entry.relatedSkills != null) {
+            for (String skill : entry.relatedSkills) {
+                reflexToNodes.computeIfAbsent(skill, k -> new ArrayList<>()).add(entry.id);
+            }
+        }
     }
 
     public void removeNode(String memoryId) {
         if (memoryId == null) return;
         nodes.remove(memoryId);
         edges.removeIf(e -> e.fromId().equals(memoryId) || e.toId().equals(memoryId));
+        reflexToNodes.values().forEach(list -> list.remove(memoryId));
+        reflexToNodes.values().removeIf(List::isEmpty);
     }
 
     public MemoryNode getNode(String memoryId) {
@@ -328,15 +336,21 @@ public class MemoryGraph {
                     String to = (String) map.get("toId");
                     String typeStr = (String) map.get("type");
                     double w = map.containsKey("weight") ? ((Number) map.get("weight")).doubleValue() : 0.5;
+                    long ca = map.containsKey("createdAt") ? ((Number) map.get("createdAt")).longValue() : 0;
+                    long ra = map.containsKey("lastReinforcedAt") ? ((Number) map.get("lastReinforcedAt")).longValue() : 0;
                     if (from != null && to != null && typeStr != null) {
                         try {
                             MemoryEdge.RelationType type = MemoryEdge.RelationType.valueOf(typeStr);
-                            edges.add(new MemoryEdge(from, to, type, w));
+                            MemoryEdge edge = ca > 0
+                                    ? new MemoryEdge(from, to, type, w, ca, ra > 0 ? ra : ca)
+                                    : new MemoryEdge(from, to, type, w);
+                            edges.add(edge);
                         } catch (IllegalArgumentException ignored) {}
                     }
                 }
             }
         }
+
     }
 
     public void save(Path path) {
@@ -362,6 +376,8 @@ public class MemoryGraph {
             em.put("toId", edge.toId());
             em.put("type", edge.type().name());
             em.put("weight", edge.weight());
+            em.put("createdAt", edge.createdAt());
+            em.put("lastReinforcedAt", edge.lastReinforcedAt());
             edgeList.add(em);
         }
         data.put("edges", edgeList);
@@ -384,5 +400,210 @@ public class MemoryGraph {
             intervalCount++;
         }
         lastMemoryTimestamp = timestamp;
+    }
+
+    // ── Reflex-Memory Index (Phase 1) ──
+
+    public void rebuildReflexToNodesIndex(MemoryManager memoryManager) {
+        reflexToNodes.clear();
+        if (memoryManager == null) return;
+        for (MemoryNode node : nodes.values()) {
+            MemoryEntry entry = memoryManager.getEntry(node.memoryId());
+            if (entry != null && entry.relatedSkills != null) {
+                for (String skill : entry.relatedSkills) {
+                    reflexToNodes.computeIfAbsent(skill, k -> new ArrayList<>()).add(node.memoryId());
+                }
+            }
+        }
+    }
+
+    public List<String> findNodeIdsByReflex(String reflexId) {
+        String reflexBody = reflexId.startsWith("reflex_") ? reflexId.substring(7) : reflexId;
+        List<String> result = new ArrayList<>();
+        for (var entry : reflexToNodes.entrySet()) {
+            String skill = entry.getKey();
+            if (reflexBody.equals(skill) || reflexBody.startsWith(skill + "_")) {
+                result.addAll(entry.getValue());
+            }
+        }
+        return result;
+    }
+
+    // ── Hebbian Reinforcement (Phase 1) ──
+
+    public void reinforcePath(List<String> nodeIds, double delta) {
+        if (nodeIds == null || nodeIds.size() < 2) return;
+        double edgeDelta = delta * 0.1;
+        for (int i = 0; i < nodeIds.size() - 1; i++) {
+            String from = nodeIds.get(i);
+            String to = nodeIds.get(i + 1);
+            MemoryEdge existing = findEdge(from, to);
+            if (existing != null) {
+                existing.updateWeight(edgeDelta);
+            } else {
+                double initWeight = Math.max(0.1, Math.min(1.0, 0.3 + delta * 0.05));
+                addEdge(from, to, MemoryEdge.RelationType.SIMILARITY, initWeight);
+            }
+        }
+    }
+
+    private MemoryEdge findEdge(String fromId, String toId) {
+        for (MemoryEdge e : edges) {
+            if (e.fromId().equals(fromId) && e.toId().equals(toId)) return e;
+            if (e.fromId().equals(toId) && e.toId().equals(fromId)) return e;
+        }
+        return null;
+    }
+
+    // ── Diffusion Activation (Phase 2) ──
+
+    public Set<String> traverse(String startId, MemoryEdge.RelationType type, int maxDepth, double minWeight) {
+        if (!nodes.containsKey(startId) || maxDepth <= 0) return Set.of();
+
+        Set<String> activated = new LinkedHashSet<>();
+        Queue<String> queue = new LinkedList<>();
+        Map<String, Integer> depthMap = new HashMap<>();
+        queue.add(startId);
+        depthMap.put(startId, 0);
+
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            int curDepth = depthMap.get(current);
+            if (curDepth >= maxDepth) continue;
+
+            for (MemoryEdge edge : edges) {
+                if (edge.weight() < minWeight) continue;
+                if (type != null && edge.type() != type) continue;
+
+                String neighbor;
+                if (edge.fromId().equals(current)) {
+                    neighbor = edge.toId();
+                } else if (edge.toId().equals(current)) {
+                    neighbor = edge.fromId();
+                } else {
+                    continue;
+                }
+
+                if (!depthMap.containsKey(neighbor)) {
+                    int neighborDepth = curDepth + 1;
+                    depthMap.put(neighbor, neighborDepth);
+                    if (neighborDepth <= maxDepth) {
+                        activated.add(neighbor);
+                        queue.add(neighbor);
+                    }
+                }
+            }
+        }
+
+        return activated;
+    }
+
+    // ── Skeleton Export/Import (Phase 3) ──
+
+    private static final double SKELETON_EDGE_WEIGHT = 0.5;
+    private static final int SKELETON_MIN_INCIDENT_EDGES = 2;
+    private static final int SKELETON_VERSION = 1;
+
+    public Map<String, Object> exportSkeleton() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("version", SKELETON_VERSION);
+
+        Map<String, Integer> incidentCount = new HashMap<>();
+        for (MemoryEdge edge : edges) {
+            if (edge.weight() >= SKELETON_EDGE_WEIGHT) {
+                incidentCount.merge(edge.fromId(), 1, Integer::sum);
+                incidentCount.merge(edge.toId(), 1, Integer::sum);
+            }
+        }
+
+        Set<String> selectedIds = incidentCount.entrySet().stream()
+                .filter(e -> e.getValue() >= SKELETON_MIN_INCIDENT_EDGES)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+
+        List<Map<String, Object>> skeletonNodes = new ArrayList<>();
+        for (MemoryNode node : nodes.values()) {
+            if (!selectedIds.contains(node.memoryId())) continue;
+            Map<String, Object> sn = new LinkedHashMap<>();
+            sn.put("label", deinstanceLabel(node.summary()));
+            skeletonNodes.add(sn);
+        }
+        result.put("skeleton_nodes", skeletonNodes);
+
+        List<Map<String, Object>> skeletonEdges = new ArrayList<>();
+        for (MemoryEdge edge : edges) {
+            if (edge.weight() < SKELETON_EDGE_WEIGHT) continue;
+            if (!selectedIds.contains(edge.fromId()) || !selectedIds.contains(edge.toId())) continue;
+            Map<String, Object> se = new LinkedHashMap<>();
+            se.put("from", edge.fromId());
+            se.put("to", edge.toId());
+            se.put("type", edge.type().name());
+            se.put("weight", edge.weight());
+            skeletonEdges.add(se);
+        }
+        result.put("skeleton_edges", skeletonEdges);
+
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    public void importSkeleton(Map<String, Object> skeleton) {
+        if (skeleton == null) return;
+
+        Object rawNodes = skeleton.get("skeleton_nodes");
+        if (rawNodes instanceof List) {
+            for (Object raw : (List<?>) rawNodes) {
+                if (raw instanceof Map) {
+                    Map<String, Object> sn = (Map<String, Object>) raw;
+                    String label = (String) sn.get("label");
+                    if (label != null) {
+                        String sid = "skel_" + label.hashCode();
+                        if (!nodes.containsKey(sid)) {
+                            nodes.put(sid, new MemoryNode(sid, label, System.currentTimeMillis(), 0));
+                        }
+                    }
+                }
+            }
+        }
+
+        Object rawEdges = skeleton.get("skeleton_edges");
+        if (rawEdges instanceof List) {
+            for (Object raw : (List<?>) rawEdges) {
+                if (raw instanceof Map) {
+                    Map<String, Object> se = (Map<String, Object>) raw;
+                    String from = (String) se.get("from");
+                    String to = (String) se.get("to");
+                    String typeStr = (String) se.get("type");
+                    double weight = se.containsKey("weight") ? ((Number) se.get("weight")).doubleValue() : 0.5;
+                    if (from != null && to != null && typeStr != null && nodes.containsKey(from) && nodes.containsKey(to)) {
+                        try {
+                            MemoryEdge.RelationType type = MemoryEdge.RelationType.valueOf(typeStr);
+                            MemoryEdge existing = findEdge(from, to);
+                            if (existing != null) {
+                                if (weight > existing.weight()) existing.setWeight(weight);
+                            } else {
+                                addEdge(from, to, type, weight);
+                            }
+                        } catch (IllegalArgumentException ignored) {}
+                    }
+                }
+            }
+        }
+    }
+
+    static String deinstanceLabel(String summary) {
+        if (summary == null) return "";
+        String result = summary
+                .replaceAll(" at \\([^)]+\\)", "")
+                .replaceAll(" \\d+:\\d+:\\d+", "")
+                .replaceAll(" \\d{4}-\\d{2}-\\d{2}", "")
+                .replaceAll("\\[.*?\\]", "")
+                .trim();
+        return result.isEmpty() ? summary : result;
+    }
+
+    void setReflexToNodes(Map<String, List<String>> index) {
+        reflexToNodes.clear();
+        if (index != null) reflexToNodes.putAll(index);
     }
 }

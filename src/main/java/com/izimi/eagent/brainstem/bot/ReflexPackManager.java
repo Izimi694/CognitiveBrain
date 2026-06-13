@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.izimi.eagent.util.FileUtil;
 import com.izimi.eagent.util.JsonUtil;
+import com.izimi.eagent.hippocampus.MemoryGraph;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,10 +22,15 @@ public class ReflexPackManager {
 
     private final UUID botId;
     private final BayesianModule bayesianModule;
+    private MemoryGraph memoryGraph;
 
     public ReflexPackManager(UUID botId, BayesianModule bayesianModule) {
         this.botId = botId;
         this.bayesianModule = bayesianModule;
+    }
+
+    public void setMemoryGraph(MemoryGraph memoryGraph) {
+        this.memoryGraph = memoryGraph;
     }
 
     public boolean exportPack(String packName, boolean includePrior) {
@@ -82,6 +88,11 @@ public class ReflexPackManager {
             }
             pack.put("bayesian_prior", filteredPrior);
         }
+
+        if (memoryGraph != null) {
+            pack.put("memory_graph", memoryGraph.exportSkeleton());
+        }
+
         return pack;
     }
 
@@ -138,6 +149,12 @@ public class ReflexPackManager {
                     }
                     BayesianModule.saveSharedPrior();
                 }
+            }
+
+            if (pack.containsKey("memory_graph") && memoryGraph != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> skeleton = (Map<String, Object>) pack.get("memory_graph");
+                memoryGraph.importSkeleton(skeleton);
             }
 
             LOGGER.info("[ReflexPack] 导入完成: {} ({} 个, 跳过 {} 个, reset={})",

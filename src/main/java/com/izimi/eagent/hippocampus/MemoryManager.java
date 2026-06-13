@@ -54,6 +54,7 @@ public class MemoryManager {
         this.memoryGraph = memoryGraph;
         if (memoryGraph != null) {
             memoryGraph.load(memoriesDir().resolve("memory_graph.json"));
+            memoryGraph.rebuildReflexToNodesIndex(this);
         }
     }
 
@@ -114,6 +115,18 @@ public class MemoryManager {
         return memoryCache.stream()
                 .filter(m -> matchesQuery(m, lower))
                 .collect(Collectors.toList());
+    }
+
+    public MemoryEntry getEntry(String id) {
+        if (id == null) return null;
+        refreshCacheIfNeeded();
+        return memoryCache.stream()
+                .filter(m -> id.equals(m.id))
+                .findFirst().orElse(null);
+    }
+
+    public MemoryGraph getMemoryGraph() {
+        return memoryGraph;
     }
 
     public List<MemoryEntry> searchByKeywords(List<String> keywords) {

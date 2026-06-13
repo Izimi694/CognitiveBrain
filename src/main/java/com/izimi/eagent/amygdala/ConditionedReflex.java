@@ -8,6 +8,8 @@ import com.izimi.eagent.brainstem.skill.Skill;
 import com.izimi.eagent.brainstem.skill.SkillManager;
 import com.izimi.eagent.brainstem.bot.BotInstance;
 import com.izimi.eagent.config.ModConfig;
+import com.izimi.eagent.hippocampus.MemoryGraph;
+import com.izimi.eagent.hippocampus.MemoryManager;
 import com.izimi.eagent.amygdala.learning.CategoryMapper;
 import com.izimi.eagent.amygdala.learning.ObservedSequence;
 import com.izimi.eagent.cortex.task.Task;
@@ -592,6 +594,19 @@ public class ConditionedReflex {
         if (bayesianModule != null) {
             List<BayesianFeature> features = extractContextFeatures(bot);
             bayesianModule.update(skillId, features, result.success());
+        }
+
+        if (botInstance != null && botInstance.getBotContext() != null) {
+            MemoryManager mem = botInstance.getBotContext().memoryManager();
+            if (mem != null) {
+                MemoryGraph mg = mem.getMemoryGraph();
+                if (mg != null) {
+                    List<String> nodeIds = mg.findNodeIdsByReflex(skillId);
+                    if (!nodeIds.isEmpty()) {
+                        mg.reinforcePath(nodeIds, result.success() ? 0.05 : -0.03);
+                    }
+                }
+            }
         }
 
         if (result.success()) {
