@@ -57,31 +57,29 @@ public class ExecutionLogger {
 
     public Map<String, List<Double>> analyzeEffectiveness() {
         Map<String, List<Double>> analysis = new HashMap<>();
-        try {
-            var dir = FileUtil.getExecutionLogsDir();
-            if (Files.exists(dir)) {
-                try (var stream = Files.list(dir)) {
-                    stream.filter(p -> p.toString().endsWith(".json")).forEach(p -> {
-                        try {
-                            LogEntry[] entries = JsonUtil.readFromFileSafe(p, LogEntry[].class);
-                            if (entries != null) {
-                                for (LogEntry entry : entries) {
-                                    analysis.computeIfAbsent(entry.action,
-                                            k -> new ArrayList<>()).add(entry.effectiveness);
-                                }
-                            }
-                        } catch (Exception ignored) {}
-                    });
-                }
-            }
-        } catch (IOException ignored) {}
-
+        loadFileLogs(analysis);
         for (LogEntry entry : recentLogs) {
-            analysis.computeIfAbsent(entry.action,
-                    k -> new ArrayList<>()).add(entry.effectiveness);
+            analysis.computeIfAbsent(entry.action, k -> new ArrayList<>()).add(entry.effectiveness);
         }
-
         return analysis;
+    }
+
+    private void loadFileLogs(Map<String, List<Double>> analysis) {
+        var dir = FileUtil.getExecutionLogsDir();
+        if (!Files.exists(dir)) return;
+        try (var stream = Files.list(dir)) {
+            stream.filter(p -> p.toString().endsWith(".json")).forEach(p -> loadLogFile(p, analysis));
+        } catch (IOException ignored) {}
+    }
+
+    private void loadLogFile(Path p, Map<String, List<Double>> analysis) {
+        try {
+            LogEntry[] entries = JsonUtil.readFromFileSafe(p, LogEntry[].class);
+            if (entries == null) return;
+            for (LogEntry entry : entries) {
+                analysis.computeIfAbsent(entry.action, k -> new ArrayList<>()).add(entry.effectiveness);
+            }
+        } catch (Exception ignored) {}
     }
 
     public static class LogEntry {

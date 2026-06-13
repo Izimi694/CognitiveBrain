@@ -240,16 +240,17 @@ public class FileUtil {
 
     public static void cleanupTempFiles() {
         for (Path dir : getAllDataDirs()) {
-            if (Files.exists(dir)) {
-                try (var stream = Files.list(dir)) {
-                    stream.filter(p -> p.toString().endsWith(".tmp"))
-                            .forEach(p -> {
-                                try {
-                                    Files.delete(p);
-                                } catch (IOException ignored) {}
-                            });
-                } catch (IOException ignored) {}
-            }
+            if (!Files.exists(dir)) continue;
+            try (var stream = Files.list(dir)) {
+                stream.filter(p -> p.toString().endsWith(".tmp"))
+                        .forEach(FileUtil::deleteQuietly);
+            } catch (IOException ignored) {}
         }
+    }
+
+    private static void deleteQuietly(Path p) {
+        try {
+            Files.delete(p);
+        } catch (IOException ignored) {}
     }
 }

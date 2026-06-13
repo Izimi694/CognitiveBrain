@@ -12,7 +12,14 @@ import com.izimi.eagent.brainstem.adapter.BasicActionAdapter;
 import com.izimi.eagent.brainstem.adapter.MinecraftActionAdapter;
 import com.izimi.eagent.brainstem.scheduler.*;
 
-import com.izimi.eagent.cortex.api.*;
+import com.izimi.eagent.cortex.api.AIClient;
+import com.izimi.eagent.cortex.api.AIChatHandler;
+import com.izimi.eagent.cortex.api.AITaskPlanner;
+import com.izimi.eagent.cortex.api.DeepSeekClient;
+import com.izimi.eagent.cortex.api.AIConfig;
+import com.izimi.eagent.cortex.api.TemplateManager;
+import com.izimi.eagent.cortex.api.PersonaManager;
+import com.izimi.eagent.cortex.api.TemplateMatcher;
 import com.izimi.eagent.cortex.inhibitor.InhibitoryControl;
 import com.izimi.eagent.amygdala.FamiliarityTracker;
 import com.izimi.eagent.brainstem.IdleBrain;
@@ -85,7 +92,6 @@ public class EAgent implements ModInitializer {
     private static AIClient aiClient;
     private static AITaskPlanner aiTaskPlanner;
     private static AIChatHandler aiChatHandler;
-    private static AIMemoryGenerator aiMemoryGenerator;
     private static BasicActionAdapter actionAdapter;
     private static PlanManager planManager;
     private static InhibitoryControl inhibitor;
@@ -126,7 +132,6 @@ public class EAgent implements ModInitializer {
         personaManager = new PersonaManager(templateManager);
         aiTaskPlanner = new AITaskPlanner(aiClient);
         aiChatHandler = new AIChatHandler(aiClient);
-        aiMemoryGenerator = new AIMemoryGenerator(aiClient);
         planManager = new PlanManager(aiTaskPlanner);
         knowledgeBase = KnowledgeBase.load();
         localTaskDecomposer = new LocalTaskDecomposer(knowledgeBase, planManager);
@@ -232,96 +237,97 @@ public class EAgent implements ModInitializer {
         behaviorEventHandler.register();
 
         ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) -> {
-            if (sender != null) {
-                String content = message.getSignedContent();
-                if (content == null || content.startsWith("/")) return;
+            if (sender == null) return;
+            String content = message.getSignedContent();
+            if (content == null || content.startsWith("/")) return;
 
-                // Step 1: Check @bot_name routing
-                if (content.startsWith("@")) {
-                    int spaceIdx = content.indexOf(' ');
-                    String namePart = spaceIdx > 0 ? content.substring(1, spaceIdx) : content.substring(1);
-                    String msgBody = spaceIdx > 0 ? content.substring(spaceIdx + 1) : "";
-                    BotInstance target = botManager != null ? botManager.getByName(namePart) : null;
-                    if (target != null && target.isSpawned()) {
-                        target.sendMessage("§7收到来自 " + sender.getName().getString() + " 的指令");
-                        routeChatToBot(target, sender, msgBody);
-                        return;
-                    }
-                }
-
-                // Step 2: Try IdleBrain on nearest bot
-                if (botManager != null && !botManager.isEmpty()) {
-                    BotInstance nearest = null;
-                    String msgBody = content;
-                    // Strip leading @ if present (but we already checked above)
-                    if (sender != null && botManager != null) {
-                        nearest = botManager.getNearest(sender);
-                    }
-
-                    if (nearest != null) {
-                        var idleResponse = nearest.getIdleBrain().handlePlayerChat(msgBody);
-                        switch (idleResponse.type()) {
-                            case AFFIRMATIVE:
-                                nearest.getTaskManager().createTask(idleResponse.taskGoal());
-                                nearest.sendMessage(idleResponse.message());
-                                return;
-                            case NEGATIVE:
-                                nearest.sendMessage(idleResponse.message());
-                                return;
-                            case IRRELEVANT:
-                                break;
-                        }
-                    }
-                } else if (idleBrain != null) {
-                    // Legacy single-bot path
-                    IdleBrain.IdleResponse response = idleBrain.handlePlayerChat(content);
-                    switch (response.type()) {
-                        case AFFIRMATIVE:
-                            taskManager.createTask(response.taskGoal());
-                            if (botController != null) {
-                                var bot = botSpawner.getBotEntity();
-                                if (bot != null) {
-                                    bot.sendMessage(Text.literal("§b[E-Agent] §f" + response.message()));
-                                }
-                            }
-                            return;
-                        case NEGATIVE:
-                            if (botController != null) {
-                                var bot = botSpawner.getBotEntity();
-                                if (bot != null) {
-                                    bot.sendMessage(Text.literal("§b[E-Agent] §f" + response.message()));
-                                }
-                            }
-                            return;
-                        case IRRELEVANT:
-                            break;
-                    }
-                }
-
-                // Step 3: Evaluation check
-                if (evaluationCycle != null) {
-                    evaluationCycle.checkMessage(content);
-                }
-
-                // Step 4: Route to nearest bot for LLM processing
-                BotInstance chatTarget = null;
-                if (botManager != null && sender != null) {
-                    chatTarget = botManager.getNearest(sender);
-                }
-
-                if (chatTarget != null) {
-                    chatTarget.setPendingChat(content);
-                } else {
-                    if (botController != null) {
-                        botController.setPendingChatMessage(content);
-                    }
-                    pendingChat = new PendingChat(content, "", "", "");
-                    pendingChatTime = System.currentTimeMillis();
-                }
-            }
+            if (handleAtBotRoute(content, sender)) return;
+            if (handleIdleBrainRoute(content, sender)) return;
+            handleFallbackRoute(content, sender);
         });
 
         LOGGER.info("[E-Agent] 初始化完成");
+    }
+
+    private static boolean handleAtBotRoute(String content, ServerPlayerEntity sender) {
+        if (!content.startsWith("@")) return false;
+        int spaceIdx = content.indexOf(' ');
+        String namePart = spaceIdx > 0 ? content.substring(1, spaceIdx) : content.substring(1);
+        String msgBody = spaceIdx > 0 ? content.substring(spaceIdx + 1) : "";
+        BotInstance target = botManager != null ? botManager.getByName(namePart) : null;
+        if (target == null || !target.isSpawned()) return false;
+        target.sendMessage("§7收到来自 " + sender.getName().getString() + " 的指令");
+        routeChatToBot(target, sender, msgBody);
+        return true;
+    }
+
+    private static boolean handleIdleBrainRoute(String content, ServerPlayerEntity sender) {
+        if (botManager != null && !botManager.isEmpty()) {
+            return handleMultiBotIdle(content, sender);
+        }
+        if (idleBrain != null) {
+            return handleLegacyIdle(content);
+        }
+        return false;
+    }
+
+    private static boolean handleMultiBotIdle(String content, ServerPlayerEntity sender) {
+        BotInstance nearest = botManager.getNearest(sender);
+        if (nearest == null) return false;
+        var idleResponse = nearest.getIdleBrain().handlePlayerChat(content);
+        switch (idleResponse.type()) {
+            case AFFIRMATIVE:
+                nearest.getTaskManager().createTask(idleResponse.taskGoal());
+                nearest.sendMessage(idleResponse.message());
+                return true;
+            case NEGATIVE:
+                nearest.sendMessage(idleResponse.message());
+                return true;
+            case IRRELEVANT:
+                return false;
+        }
+        return false;
+    }
+
+    private static boolean handleLegacyIdle(String content) {
+        IdleBrain.IdleResponse response = idleBrain.handlePlayerChat(content);
+        switch (response.type()) {
+            case AFFIRMATIVE:
+                taskManager.createTask(response.taskGoal());
+                sendBotMessage("§b[E-Agent] §f" + response.message());
+                return true;
+            case NEGATIVE:
+                sendBotMessage("§b[E-Agent] §f" + response.message());
+                return true;
+            case IRRELEVANT:
+                return false;
+        }
+        return false;
+    }
+
+    private static void sendBotMessage(String text) {
+        if (botController == null) return;
+        var bot = botSpawner.getBotEntity();
+        if (bot != null) {
+            bot.sendMessage(Text.literal(text));
+        }
+    }
+
+    private static void handleFallbackRoute(String content, ServerPlayerEntity sender) {
+        if (evaluationCycle != null) {
+            evaluationCycle.checkMessage(content);
+        }
+
+        BotInstance chatTarget = botManager != null && sender != null ? botManager.getNearest(sender) : null;
+        if (chatTarget != null) {
+            chatTarget.setPendingChat(content);
+        } else {
+            if (botController != null) {
+                botController.setPendingChatMessage(content);
+            }
+            pendingChat = new PendingChat(content, "", "", "");
+            pendingChatTime = System.currentTimeMillis();
+        }
     }
 
     private static void routeChatToBot(BotInstance bot, ServerPlayerEntity sender, String message) {
@@ -343,7 +349,6 @@ public class EAgent implements ModInitializer {
         botManager.notifyReflexSuccess(bot, category);
     }
 
-    @Deprecated
     public static MemoryManager getMemoryManager() { return memoryManager; }
 
     public static CognitiveBrainAPI getAPI() { return cognitiveBrain; }

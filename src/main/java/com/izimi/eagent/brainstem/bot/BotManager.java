@@ -218,44 +218,48 @@ public class BotManager {
             Files.createDirectories(newBotDir);
             try (var stream = Files.list(mentorDir)) {
                 stream.filter(p -> p.toString().endsWith(".json"))
-                        .forEach(src -> {
-                            try {
-                                Path rel = mentorDir.relativize(src);
-                                Path dest = newBotDir.resolve(rel);
-
-                                Map<String, Object> data = JsonUtil.readMapFromFileSafe(src);
-                                if (data == null) return;
-
-                                // Trial-first: bot gets full template, self-validates before adopting
-                                data.put("status", "trial");
-                                data.put("trialSuccesses", 0);
-                                data.put("trialFailures", 0);
-                                data.put("shortTermWeight", 0.5);
-                                data.put("longTermBaseline", 0.5);
-                                data.put("proficiency", 0.3);
-                                data.put("executionCount", 0);
-                                data.put("successRate", 0.0);
-
-                                @SuppressWarnings("unchecked")
-                                List<Map<String, Object>> atoms = (List<Map<String, Object>>) data.get("atoms");
-                                if (atoms != null) {
-                                    for (Map<String, Object> atom : atoms) {
-                                        atom.put("executionCount", 0);
-                                        atom.put("successRate", 0.0);
-                                        atom.put("proficiency", 0.1);
-                                    }
-                                }
-
-                                JsonUtil.writeToFileSafeAtomic(dest, data);
-                            } catch (Exception e) {
-                                LOGGER.warn("[BotManager] 复制反射失败: {}", src, e);
-                            }
-                        });
+                        .forEach(src -> copyReflexFile(src, mentorDir, newBotDir));
             }
             LOGGER.info("[BotManager] 从 {} 继承反射到 {} (trial-first)",
                     mentor.getBotName(), newBot.getBotName());
         } catch (IOException e) {
             LOGGER.warn("[BotManager] 冷启动反射复制失败", e);
+        }
+    }
+
+    private void copyReflexFile(Path src, Path mentorDir, Path newBotDir) {
+        try {
+            Path rel = mentorDir.relativize(src);
+            Path dest = newBotDir.resolve(rel);
+
+            Map<String, Object> data = JsonUtil.readMapFromFileSafe(src);
+            if (data == null) return;
+
+            data.put("status", "trial");
+            data.put("trialSuccesses", 0);
+            data.put("trialFailures", 0);
+            data.put("shortTermWeight", 0.5);
+            data.put("longTermBaseline", 0.5);
+            data.put("proficiency", 0.3);
+            data.put("executionCount", 0);
+            data.put("successRate", 0.0);
+
+            resetAtomsToTrial(data);
+
+            JsonUtil.writeToFileSafeAtomic(dest, data);
+        } catch (Exception e) {
+            LOGGER.warn("[BotManager] 复制反射失败: {}", src, e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void resetAtomsToTrial(Map<String, Object> data) {
+        List<Map<String, Object>> atoms = (List<Map<String, Object>>) data.get("atoms");
+        if (atoms == null) return;
+        for (Map<String, Object> atom : atoms) {
+            atom.put("executionCount", 0);
+            atom.put("successRate", 0.0);
+            atom.put("proficiency", 0.1);
         }
     }
 

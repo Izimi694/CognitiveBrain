@@ -222,18 +222,20 @@ public class MemoryManager {
         try (var stream = Files.list(dir)) {
             stream.filter(p -> p.toString().endsWith(".mem") && !p.getFileName().toString().equals("latest.mem"))
                     .sorted(Comparator.reverseOrder())
-                    .forEach(p -> {
-                        try {
-                            MemoryEntry[] arr = JsonUtil.readFromFile(p, MemoryEntry[].class);
-                            if (arr != null) {
-                                memoryCache.addAll(Arrays.asList(arr));
-                            }
-                        } catch (Exception ignored) {}
-                    });
+                    .forEach(this::loadMemoryFile);
         } catch (IOException ignored) {}
 
         memoryCache.sort((a, b) -> Long.compare(b.timestamp, a.timestamp));
         lastCacheUpdate = System.currentTimeMillis();
+    }
+
+    private void loadMemoryFile(Path p) {
+        try {
+            MemoryEntry[] arr = JsonUtil.readFromFile(p, MemoryEntry[].class);
+            if (arr != null) {
+                memoryCache.addAll(Arrays.asList(arr));
+            }
+        } catch (Exception ignored) {}
     }
 
     private void refreshCacheIfNeeded() {

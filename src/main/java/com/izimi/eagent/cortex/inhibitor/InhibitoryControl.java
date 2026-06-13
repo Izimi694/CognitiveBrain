@@ -70,47 +70,49 @@ public class InhibitoryControl {
 
     public boolean shouldVetoImitation(String actionType, ServerPlayerEntity bot) {
         if (actionType == null || bot == null) return false;
+        return switch (actionType) {
+            case "moveTo" -> vetoMoveToImitation(bot);
+            case "jump" -> vetoJumpImitation(bot);
+            case "attack" -> vetoAttackImitation(bot);
+            default -> false;
+        };
+    }
 
+    private boolean vetoMoveToImitation(ServerPlayerEntity bot) {
         World world = bot.getServerWorld();
         BlockPos pos = bot.getBlockPos();
-
-        switch (actionType) {
-            case "moveTo": {
-                for (int dx = -1; dx <= 1; dx++) {
-                    for (int dz = -1; dz <= 1; dz++) {
-                        if (world.getBlockState(pos.add(dx, 0, dz)).isOf(Blocks.LAVA)) {
-                            logVeto("模仿-moveTo", "目标位置附近有岩浆");
-                            vetoImitationCount++;
-                            return true;
-                        }
-                    }
-                }
-                break;
-            }
-            case "jump": {
-                BlockPos below = pos.down();
-                for (int dy = 1; dy <= FALL_DANGER_HEIGHT; dy++) {
-                    if (world.getBlockState(below.down(dy)).isAir()) {
-                        if (!world.getBlockState(below.down(dy + 1)).isAir()) {
-                            logVeto("模仿-jump", "潜在坠落高度 > " + FALL_DANGER_HEIGHT);
-                            vetoImitationCount++;
-                            return true;
-                        }
-                    }
-                }
-                break;
-            }
-            case "attack": {
-                LivingEntity target = findNearestAttackTarget(bot, 5);
-                if (target instanceof VillagerEntity) {
-                    logVeto("模仿-attack", "目标为村民，否决");
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (world.getBlockState(pos.add(dx, 0, dz)).isOf(Blocks.LAVA)) {
+                    logVeto("模仿-moveTo", "目标位置附近有岩浆");
                     vetoImitationCount++;
                     return true;
                 }
-                break;
             }
         }
+        return false;
+    }
 
+    private boolean vetoJumpImitation(ServerPlayerEntity bot) {
+        BlockPos below = bot.getBlockPos().down();
+        World world = bot.getServerWorld();
+        for (int dy = 1; dy <= FALL_DANGER_HEIGHT; dy++) {
+            if (!world.getBlockState(below.down(dy)).isAir()) continue;
+            if (world.getBlockState(below.down(dy + 1)).isAir()) continue;
+            logVeto("模仿-jump", "潜在坠落高度 > " + FALL_DANGER_HEIGHT);
+            vetoImitationCount++;
+            return true;
+        }
+        return false;
+    }
+
+    private boolean vetoAttackImitation(ServerPlayerEntity bot) {
+        LivingEntity target = findNearestAttackTarget(bot, 5);
+        if (target instanceof VillagerEntity) {
+            logVeto("模仿-attack", "目标为村民，否决");
+            vetoImitationCount++;
+            return true;
+        }
         return false;
     }
 

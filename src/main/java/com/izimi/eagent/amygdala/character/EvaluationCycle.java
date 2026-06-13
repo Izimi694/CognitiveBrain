@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.izimi.eagent.cortex.api.AIClient;
 import com.izimi.eagent.cortex.api.AIMessage;
+import com.izimi.eagent.cortex.api.AIResponse;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -72,31 +73,33 @@ public class EvaluationCycle {
                 "评价:\n" + joined + "\n\n" + reflexContext);
 
         try {
-            aiClient.sendMessage(List.of(systemMsg, userMsg)).thenAccept(response -> {
-                if (response == null || response.getMessage() == null || response.getMessage().isEmpty()) return;
-
-                try {
-                    var gson = new com.google.gson.Gson();
-                    var array = gson.fromJson(response.getMessage(), com.google.gson.JsonArray.class);
-                    if (array == null) return;
-
-                    for (int i = 0; i < array.size(); i++) {
-                        var obj = array.get(i).getAsJsonObject();
-                        String hint = resolveReflexHint(obj);
-                        double delta = obj.has("delta") ? obj.get("delta").getAsDouble() : 0;
-                        if (hint.isEmpty() || delta == 0) continue;
-
-                        String matchedId = conditionedReflex.matchReflexIdByHint(hint);
-                        if (matchedId != null) {
-                            conditionedReflex.reinforceWithSpill(matchedId, delta);
-                        }
-                    }
-                } catch (Exception e) {
-                    LOGGER.warn("[EvaluationCycle] JSON解析失败: {}", e.getMessage());
-                }
-            });
+            aiClient.sendMessage(List.of(systemMsg, userMsg))
+                    .thenAccept(this::processBatchResponse);
         } catch (Exception e) {
             LOGGER.warn("[EvaluationCycle] 批量强化失败: {}", e.getMessage());
+        }
+    }
+
+    private void processBatchResponse(AIResponse response) {
+        if (response == null || response.getMessage() == null || response.getMessage().isEmpty()) return;
+        try {
+            var array = new com.google.gson.Gson().fromJson(response.getMessage(), com.google.gson.JsonArray.class);
+            if (array == null) return;
+            for (int i = 0; i < array.size(); i++) {
+                applyEvaluationEntry(array.get(i).getAsJsonObject());
+            }
+        } catch (Exception e) {
+            LOGGER.warn("[EvaluationCycle] JSON解析失败: {}", e.getMessage());
+        }
+    }
+
+    private void applyEvaluationEntry(com.google.gson.JsonObject obj) {
+        String hint = resolveReflexHint(obj);
+        double delta = obj.has("delta") ? obj.get("delta").getAsDouble() : 0;
+        if (hint.isEmpty() || delta == 0) return;
+        String matchedId = conditionedReflex.matchReflexIdByHint(hint);
+        if (matchedId != null) {
+            conditionedReflex.reinforceWithSpill(matchedId, delta);
         }
     }
 

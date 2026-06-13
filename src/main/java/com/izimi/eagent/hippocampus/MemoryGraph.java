@@ -63,6 +63,8 @@ public class MemoryGraph {
     // ── Edge CRUD ──
 
     public void addEdge(String fromId, String toId, MemoryEdge.RelationType type, double weight) {
+        Objects.requireNonNull(type, "type must not be null");
+        if (fromId == null || toId == null) throw new IllegalArgumentException("fromId and toId must not be null");
         if (!nodes.containsKey(fromId) || !nodes.containsKey(toId)) return;
         edges.add(new MemoryEdge(fromId, toId, type, Math.max(0, Math.min(1, weight))));
     }
@@ -307,53 +309,58 @@ public class MemoryGraph {
             lastSavedDay = ((Number) data.get("lastSavedDay")).intValue();
         }
 
+        loadNodes(data);
+        loadEdges(data);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadNodes(Map<String, Object> data) {
         nodes.clear();
         Object rawNodes = data.get("nodes");
-        if (rawNodes instanceof List) {
-            for (Object raw : (List<?>) rawNodes) {
-                if (raw instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> map = (Map<String, Object>) raw;
-                    String id = (String) map.get("memoryId");
-                    String summary = (String) map.get("summary");
-                    long ts = map.containsKey("timestamp") ? ((Number) map.get("timestamp")).longValue() : 0;
-                    int gd = map.containsKey("gameDay") ? ((Number) map.get("gameDay")).intValue() : 0;
-                    if (id != null) {
-                        nodes.put(id, new MemoryNode(id, summary, ts, gd));
-                    }
-                }
-            }
+        if (!(rawNodes instanceof List)) return;
+        for (Object raw : (List<?>) rawNodes) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> map = (Map<String, Object>) raw;
+            String id = (String) map.get("memoryId");
+            if (id == null) continue;
+            String summary = (String) map.get("summary");
+            long ts = map.containsKey("timestamp") ? ((Number) map.get("timestamp")).longValue() : 0;
+            int gd = map.containsKey("gameDay") ? ((Number) map.get("gameDay")).intValue() : 0;
+            nodes.put(id, new MemoryNode(id, summary, ts, gd));
         }
+    }
 
+    @SuppressWarnings("unchecked")
+    private void loadEdges(Map<String, Object> data) {
         edges.clear();
         Object rawEdges = data.get("edges");
-        if (rawEdges instanceof List) {
-            for (Object raw : (List<?>) rawEdges) {
-                if (raw instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> map = (Map<String, Object>) raw;
-                    String from = (String) map.get("fromId");
-                    String to = (String) map.get("toId");
-                    String typeStr = (String) map.get("type");
-                    double w = map.containsKey("weight") ? ((Number) map.get("weight")).doubleValue() : 0.5;
-                    long ca = map.containsKey("createdAt") ? ((Number) map.get("createdAt")).longValue() : 0;
-                    long ra = map.containsKey("lastReinforcedAt") ? ((Number) map.get("lastReinforcedAt")).longValue() : 0;
-                    if (from != null && to != null && typeStr != null) {
-                        try {
-                            MemoryEdge.RelationType type = MemoryEdge.RelationType.valueOf(typeStr);
-                            MemoryEdge edge = ca > 0
-                                    ? new MemoryEdge(from, to, type, w, ca, ra > 0 ? ra : ca)
-                                    : new MemoryEdge(from, to, type, w);
-                            edges.add(edge);
-                        } catch (IllegalArgumentException ignored) {}
-                    }
-                }
-            }
+        if (!(rawEdges instanceof List)) return;
+        for (Object raw : (List<?>) rawEdges) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> map = (Map<String, Object>) raw;
+            loadEdge(map);
         }
+    }
 
+    private void loadEdge(Map<String, Object> map) {
+        String from = (String) map.get("fromId");
+        String to = (String) map.get("toId");
+        String typeStr = (String) map.get("type");
+        if (from == null || to == null || typeStr == null) return;
+        double w = map.containsKey("weight") ? ((Number) map.get("weight")).doubleValue() : 0.5;
+        long ca = map.containsKey("createdAt") ? ((Number) map.get("createdAt")).longValue() : 0;
+        long ra = map.containsKey("lastReinforcedAt") ? ((Number) map.get("lastReinforcedAt")).longValue() : 0;
+        try {
+            MemoryEdge.RelationType type = MemoryEdge.RelationType.valueOf(typeStr);
+            MemoryEdge edge = ca > 0
+                    ? new MemoryEdge(from, to, type, w, ca, ra > 0 ? ra : ca)
+                    : new MemoryEdge(from, to, type, w);
+            edges.add(edge);
+        } catch (IllegalArgumentException ignored) {}
     }
 
     public void save(Path path) {
+        Objects.requireNonNull(path, "path must not be null");
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("version", "1.0");
         data.put("lastSavedDay", lastSavedDay);
@@ -418,12 +425,14 @@ public class MemoryGraph {
     }
 
     public List<String> findNodeIdsByReflex(String reflexId) {
+        if (reflexId == null) return List.of();
         String reflexBody = reflexId.startsWith("reflex_") ? reflexId.substring(7) : reflexId;
         List<String> result = new ArrayList<>();
         for (var entry : reflexToNodes.entrySet()) {
             String skill = entry.getKey();
             if (reflexBody.equals(skill) || reflexBody.startsWith(skill + "_")) {
-                result.addAll(entry.getValue());
+                List<String> ids = entry.getValue();
+                if (ids != null) result.addAll(ids);
             }
         }
         return result;
@@ -550,45 +559,52 @@ public class MemoryGraph {
     public void importSkeleton(Map<String, Object> skeleton) {
         if (skeleton == null) return;
 
-        Object rawNodes = skeleton.get("skeleton_nodes");
-        if (rawNodes instanceof List) {
-            for (Object raw : (List<?>) rawNodes) {
-                if (raw instanceof Map) {
-                    Map<String, Object> sn = (Map<String, Object>) raw;
-                    String label = (String) sn.get("label");
-                    if (label != null) {
-                        String sid = "skel_" + label.hashCode();
-                        if (!nodes.containsKey(sid)) {
-                            nodes.put(sid, new MemoryNode(sid, label, System.currentTimeMillis(), 0));
-                        }
-                    }
-                }
-            }
-        }
+        importSkeletonNodes(skeleton);
+        importSkeletonEdges(skeleton);
+    }
 
-        Object rawEdges = skeleton.get("skeleton_edges");
-        if (rawEdges instanceof List) {
-            for (Object raw : (List<?>) rawEdges) {
-                if (raw instanceof Map) {
-                    Map<String, Object> se = (Map<String, Object>) raw;
-                    String from = (String) se.get("from");
-                    String to = (String) se.get("to");
-                    String typeStr = (String) se.get("type");
-                    double weight = se.containsKey("weight") ? ((Number) se.get("weight")).doubleValue() : 0.5;
-                    if (from != null && to != null && typeStr != null && nodes.containsKey(from) && nodes.containsKey(to)) {
-                        try {
-                            MemoryEdge.RelationType type = MemoryEdge.RelationType.valueOf(typeStr);
-                            MemoryEdge existing = findEdge(from, to);
-                            if (existing != null) {
-                                if (weight > existing.weight()) existing.setWeight(weight);
-                            } else {
-                                addEdge(from, to, type, weight);
-                            }
-                        } catch (IllegalArgumentException ignored) {}
-                    }
-                }
+    private void importSkeletonNodes(Map<String, Object> skeleton) {
+        Object rawNodes = skeleton.get("skeleton_nodes");
+        if (!(rawNodes instanceof List)) return;
+        for (Object raw : (List<?>) rawNodes) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> sn = (Map<String, Object>) raw;
+            String label = (String) sn.get("label");
+            if (label == null) continue;
+            String sid = "skel_" + label.hashCode();
+            if (!nodes.containsKey(sid)) {
+                nodes.put(sid, new MemoryNode(sid, label, System.currentTimeMillis(), 0));
             }
         }
+    }
+
+    private void importSkeletonEdges(Map<String, Object> skeleton) {
+        Object rawEdges = skeleton.get("skeleton_edges");
+        if (!(rawEdges instanceof List)) return;
+        for (Object raw : (List<?>) rawEdges) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> se = (Map<String, Object>) raw;
+            importSkeletonEdge(se);
+        }
+    }
+
+    private void importSkeletonEdge(Map<String, Object> se) {
+        String from = (String) se.get("from");
+        String to = (String) se.get("to");
+        String typeStr = (String) se.get("type");
+        double weight = se.containsKey("weight") ? ((Number) se.get("weight")).doubleValue() : 0.5;
+        if (from == null || to == null || typeStr == null) return;
+        if (!nodes.containsKey(from) || !nodes.containsKey(to)) return;
+
+        try {
+            MemoryEdge.RelationType type = MemoryEdge.RelationType.valueOf(typeStr);
+            MemoryEdge existing = findEdge(from, to);
+            if (existing != null) {
+                if (weight > existing.weight()) existing.setWeight(weight);
+            } else {
+                addEdge(from, to, type, weight);
+            }
+        } catch (IllegalArgumentException ignored) {}
     }
 
     static String deinstanceLabel(String summary) {
@@ -604,6 +620,8 @@ public class MemoryGraph {
 
     void setReflexToNodes(Map<String, List<String>> index) {
         reflexToNodes.clear();
-        if (index != null) reflexToNodes.putAll(index);
+        if (index != null) {
+            index.forEach((k, v) -> reflexToNodes.put(k, v == null ? null : new ArrayList<>(v)));
+        }
     }
 }

@@ -92,29 +92,7 @@ public class BotController {
 
         // P0: 安全反射 — 永远优先, 每 tick 检查, 0 API
         // P0.5: 前额叶抑制审核 — 否决不适当的安全反射
-        if (reflexRegistry != null) {
-            InnateReflex safety = reflexRegistry.highest(bot, 0);
-            if (safety != null) {
-                if (inhibitor != null) {
-                    BehaviorStats stats = worldContext.behaviorStats();
-                    if (inhibitor.shouldVetoSafety(safety, bot, server, stats)) {
-                        LOGGER.debug("[BotController] P0.5前额叶否决安全反射: {}", safety.id());
-                    } else {
-                        LOGGER.debug("[BotController] P0安全反射: {} critical={}", safety.id(), safety.critical());
-                        dispatchReflexAction(bot, safety);
-                        if (safety.critical()) {
-                            return;
-                        }
-                    }
-                } else {
-                    LOGGER.debug("[BotController] P0安全反射: {} critical={}", safety.id(), safety.critical());
-                    dispatchReflexAction(bot, safety);
-                    if (safety.critical()) {
-                        return;
-                    }
-                }
-            }
-        }
+        if (reflexRegistry != null && executeSafetyReflex(bot, server)) return;
 
         // P1: 玩家任务 → 固化反射匹配 → 本地执行, 0 API
         var activeTask = taskManager.getActiveTask();
@@ -308,6 +286,18 @@ public class BotController {
 
     public void setWorldContext(WorldContext worldContext) {
         this.worldContext = worldContext;
+    }
+
+    private boolean executeSafetyReflex(ServerPlayerEntity bot, MinecraftServer server) {
+        InnateReflex safety = reflexRegistry.highest(bot, 0);
+        if (safety == null) return false;
+        if (inhibitor != null && inhibitor.shouldVetoSafety(safety, bot, server, worldContext.behaviorStats())) {
+            LOGGER.debug("[BotController] P0.5前额叶否决安全反射: {}", safety.id());
+            return false;
+        }
+        LOGGER.debug("[BotController] P0安全反射: {} critical={}", safety.id(), safety.critical());
+        dispatchReflexAction(bot, safety);
+        return safety.critical();
     }
 
     public void setMetaScheduler(MetaScheduler scheduler) {

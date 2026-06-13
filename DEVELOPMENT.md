@@ -37,6 +37,7 @@
 | **Phase G-M** | **ReflexChain DAG/死路检测/环境可控性/双向推理/共享池/参数绑定/L1/L3 门控/前置条件门控 (99 tests)** | ✅ |
 | **Phase LLM (P0-P5)** | **四模板LLM调用重构: TemplateMatcher + CLARIFICATION/CHAT_RESPONSE + PersonaManager + MetaScheduler接入** | ✅ |
 | **Phase MG** | **MemoryGraph 记忆关系图 (inferEdges/遍历/持久化/贝叶斯排重)** | ✅ |
+| **Decoupling #7/#11/#12/#13** | **BotController/EAgent.LOGGER 全局替换/ConditionedReflex/MinecraftReflexEvaluator 解耦** | ✅ |
 
 ---
 
@@ -63,11 +64,15 @@ Phase LLM (四模板LLM调用重构):
   └── P5 — 删除 CHAT_DIRECTION 模板
 
 Phase MG (MemoryGraph 记忆关系图):
-  ├── MG1 — MemoryNode/MemoryEdge records + MemoryGraph 核心(CRUD/save/load)
+  ├── MG1 — MemoryNode record + MemoryEdge mutable class + MemoryGraph 核心 (CRUD/save/load)
   ├── MG2 — inferEdges 显著性门控(computeSalience) + TEMPORAL/CAUSAL/SIMILARITY/CONTRAST 边推断
   ├── MG3 — 图遍历API (traverse/traceCausalChain/findSimilar/getTimeline/rankEdges)
   ├── MG4 — 持久化 memory_graph.json (+ version/no MissingNode)
-  └── MG5 — MemoryManager 集成(setMemoryGraph) + 24 测试全部通过
+  ├── MG5 — MemoryManager 集成(setMemoryGraph) + rebuildReflexToNodesIndex
+  ├── MG6 — Hebbian 强化: reflexToNodes 索引 + findNodeIdsByReflex(前缀匹配) + reinforcePath
+  │   └── ConditionedReflex 集成 (贝叶斯更新后调用)
+  ├── MG7 — 扩散激活: traverse 重载(maxDepth/minWeight) + MetaScheduler 三路候选合并
+  └── MG8 — 骨骼导出/导入: exportSkeleton + importSkeleton + ReflexPackManager 集成
 ```
 
 ---
@@ -230,10 +235,10 @@ minecraft/eagent/
 | `BotParamsTest.java` | 7 | 三规则继承/参数范围/变异 |
 | `BayesianModuleTest.java` | 16 | 三层存储/概率预测/收敛判断/FileSystem注入 |
 | `TemplateManagerTest.java` | 15 | 模板填空/解析/钩子/速率限制/异常传播/CLARIFICATION/CHAT_RESPONSE |
-| `MemoryGraphTest.java` | 24 | 节点/边 CRUD、显著性门控、边推断、图遍历 BFS、因果链、持久化、贝叶斯重排 |
-| **合计 (含新增)** | **238** | **全部通过** |
-
-**待补充测试：** `ChatSessionManager`
+| `MemoryGraphTest.java` | 38 | 节点/边 CRUD、显著性门控、边推断、图遍历 BFS、因果链、持久化、贝叶斯重排、Hebbian 强化、扩散激活、骨骼导出/导入 |
+| `ChatSessionManagerTest.java` | 7 | 窗口限制/方向回退/null安全/防御拷贝 |
+| `TemplateMatcherTest.java` | 14 | 路由: CLARIFICATION/TASK_PLAN/REFLEX_CREATE/CHAT_RESPONSE/拦截 |
+| **合计 (含新增)** | **273** | **全部通过** |
 
 **新增测试计划：**
 
@@ -247,4 +252,3 @@ minecraft/eagent/
 | L | `ConditionedReflexPhaseLTest.java` | 4 | precondition guard skip/wait/defer |
 | M | `ParameterBinderTest.java` | 12 | bindings 绑定/transform/绑定失败→回退 |
 | | `AlarmGatingTest.java` | 11 | L1/L3 门控 (OneShotAlarmSystem/SocialObserver/HormonalSystem) |
-| | `TemplateMatcherTest.java` | 计划中 | 路由逻辑: CLARIFICATION/TASK_PLAN/REFLEX_CREATE/CHAT_RESPONSE 分类 |

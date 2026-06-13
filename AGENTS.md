@@ -182,3 +182,5 @@
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 开发状态/路线图/bug/构建/指令/测试 |
 | [THEORY.md](./THEORY.md) | 理论背景、从零推导、论文引用 |
 | [INTERNALIZATION.md](./INTERNALIZATION.md) | 抽象概念内化检查清单 |
+
+PS：记得提前边界条件和前卫语句，不会擅自修改不符合条件的参数，快速失败，快速报错。

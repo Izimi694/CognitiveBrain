@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -304,140 +305,124 @@ public class ConditionedReflex {
 
     @SuppressWarnings("unchecked")
     private boolean isTargetNearby(ServerPlayerEntity bot, String category, Map<String, Object> reflexData) {
-        var world = bot.getServerWorld();
-        BlockPos botPos = bot.getBlockPos();
-        int scanRange = 8;
-
         if (category.startsWith("dig_")) {
-            List<String> contributedTargets = (List<String>) reflexData.get("contributedTargets");
-            List<String> searchTargets = contributedTargets != null ? contributedTargets : List.of();
+            return isDigTargetNearby(bot, reflexData);
+        }
+        if (category.startsWith("attack_")) {
+            return isAttackTargetNearby(bot, reflexData);
+        }
+        return false;
+    }
 
-            if (searchTargets.isEmpty()) {
-                String target = (String) reflexData.get("target");
-                if (target != null) searchTargets = List.of(target);
-            }
+    private boolean isDigTargetNearby(ServerPlayerEntity bot, Map<String, Object> reflexData) {
+        BlockPos botPos = bot.getBlockPos();
+        List<String> contributedTargets = (List<String>) reflexData.get("contributedTargets");
+        List<String> searchTargets = contributedTargets != null ? contributedTargets : List.of();
 
-            for (int dx = -scanRange; dx <= scanRange; dx++) {
-                for (int dy = -scanRange; dy <= scanRange; dy++) {
-                    for (int dz = -scanRange; dz <= scanRange; dz++) {
-                        BlockPos pos = botPos.add(dx, dy, dz);
-                        BlockState state = world.getBlockState(pos);
-                        if (state.isAir() || state.isOf(Blocks.BEDROCK)) continue;
+        if (searchTargets.isEmpty()) {
+            String target = (String) reflexData.get("target");
+            if (target != null) searchTargets = List.of(target);
+        }
+        if (searchTargets.isEmpty()) return false;
 
-                        String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
-                        for (String target : searchTargets) {
-                            if (blockId.toLowerCase().contains(target.toLowerCase())) {
-                                return true;
-                            }
-                        }
+        return scanBlocksForTargets(bot.getServerWorld(), botPos, 8, searchTargets);
+    }
+
+    private boolean isAttackTargetNearby(ServerPlayerEntity bot, Map<String, Object> reflexData) {
+        var world = bot.getServerWorld();
+        String target = (String) reflexData.get("target");
+        if (target == null) return false;
+
+        var entities = world.getEntitiesByClass(LivingEntity.class,
+                bot.getBoundingBox().expand(8),
+                e -> e.isAlive() && e != bot);
+        for (var entity : entities) {
+            String entityId = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+            if (entityId.toLowerCase().contains(target.toLowerCase())) return true;
+        }
+        return false;
+    }
+
+    private boolean scanBlocksForTargets(ServerWorld world, BlockPos botPos, int scanRange, List<String> targets) {
+        for (int dx = -scanRange; dx <= scanRange; dx++) {
+            for (int dy = -scanRange; dy <= scanRange; dy++) {
+                for (int dz = -scanRange; dz <= scanRange; dz++) {
+                    BlockPos pos = botPos.add(dx, dy, dz);
+                    BlockState state = world.getBlockState(pos);
+                    if (state.isAir() || state.isOf(Blocks.BEDROCK)) continue;
+                    String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
+                    for (String target : targets) {
+                        if (blockId.toLowerCase().contains(target.toLowerCase())) return true;
                     }
                 }
             }
-            return false;
+        }
+        return false;
+    }
+
+    private boolean isAtomTargetNearby(ServerPlayerEntity bot, String action, String atomTarget) {
+        if ("equipItem".equals(action) || atomTarget.startsWith("equip_")) return true;
+
+        String search = stripPrefix(atomTarget);
+
+        if ("dig".equals(action) || atomTarget.startsWith("dig_")) {
+            return scanBlocksForAtomTarget(bot.getServerWorld(), bot.getBlockPos(), search, atomTarget);
         }
 
-        if (category.startsWith("attack_")) {
-            var entities = world.getEntitiesByClass(LivingEntity.class,
-                    bot.getBoundingBox().expand(scanRange),
-                    e -> e.isAlive() && e != bot);
-            for (var entity : entities) {
-                String entityId = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
-                String target = (String) reflexData.get("target");
-                if (target != null && entityId.toLowerCase().contains(target.toLowerCase())) {
-                    return true;
-                }
-            }
-            return false;
+        if ("attack".equals(action) || atomTarget.startsWith("attack_")) {
+            return scanEntitiesForTarget(bot, search);
+        }
+
+        if ("moveTo".equals(action) || atomTarget.startsWith("moveTo_")) {
+            return scanBlocksForAtomTarget(bot.getServerWorld(), bot.getBlockPos(), search, null);
         }
 
         return false;
     }
 
-    private boolean isAtomTargetNearby(ServerPlayerEntity bot, String action, String atomTarget) {
+    private static String stripPrefix(String atomTarget) {
+        if (atomTarget.contains("_")) {
+            return atomTarget.substring(atomTarget.indexOf('_') + 1);
+        }
+        return atomTarget;
+    }
+
+    private boolean scanBlocksForAtomTarget(ServerWorld world, BlockPos botPos, String search, String categoryCheck) {
+        for (int dx = -8; dx <= 8; dx++) {
+            for (int dy = -8; dy <= 8; dy++) {
+                for (int dz = -8; dz <= 8; dz++) {
+                    BlockPos pos = botPos.add(dx, dy, dz);
+                    BlockState state = world.getBlockState(pos);
+                    if (state.isAir() || state.isOf(Blocks.BEDROCK)) continue;
+                    String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
+                    if (matchCategoryTarget(blockId, search, categoryCheck)) return true;
+                    if (blockId.toLowerCase().contains(search.toLowerCase())) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean scanEntitiesForTarget(ServerPlayerEntity bot, String search) {
         var world = bot.getServerWorld();
-        BlockPos botPos = bot.getBlockPos();
-        int scanRange = 8;
-
-        if ("dig".equals(action) || atomTarget.startsWith("dig_")) {
-            String search = atomTarget;
-            if (search.contains("_")) {
-                search = search.substring(search.indexOf('_') + 1);
-            }
-
-            for (int dx = -scanRange; dx <= scanRange; dx++) {
-                for (int dy = -scanRange; dy <= scanRange; dy++) {
-                    for (int dz = -scanRange; dz <= scanRange; dz++) {
-                        BlockPos pos = botPos.add(dx, dy, dz);
-                        BlockState state = world.getBlockState(pos);
-                        if (state.isAir() || state.isOf(Blocks.BEDROCK)) continue;
-
-                        String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
-                        for (var rule : CategoryMapper.getCategoryRules().entrySet()) {
-                            if (rule.getKey().equals(search) || rule.getKey().equals(atomTarget)) {
-                                for (String pattern : rule.getValue()) {
-                                    if (blockId.toLowerCase().contains(pattern.toLowerCase())) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        if (blockId.toLowerCase().contains(search.toLowerCase())) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
+        var entities = world.getEntitiesByClass(LivingEntity.class,
+                bot.getBoundingBox().expand(8),
+                e -> e.isAlive() && e != bot);
+        for (var entity : entities) {
+            String entityId = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+            if (entityId.toLowerCase().contains(search.toLowerCase())) return true;
         }
+        return false;
+    }
 
-        if ("attack".equals(action) || atomTarget.startsWith("attack_")) {
-            String search = atomTarget;
-            if (search.contains("_")) {
-                search = search.substring(search.indexOf('_') + 1);
+    private static boolean matchCategoryTarget(String blockId, String search, String categoryCheck) {
+        for (var rule : CategoryMapper.getCategoryRules().entrySet()) {
+            if (!rule.getKey().equals(search) && !rule.getKey().equals(categoryCheck)) continue;
+            for (String pattern : rule.getValue()) {
+                if (blockId.toLowerCase().contains(pattern.toLowerCase())) return true;
             }
-            var entities = world.getEntitiesByClass(LivingEntity.class,
-                    bot.getBoundingBox().expand(scanRange),
-                    e -> e.isAlive() && e != bot);
-            for (var entity : entities) {
-                String entityId = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
-                if (entityId.toLowerCase().contains(search.toLowerCase())) {
-                    return true;
-                }
-            }
-            return false;
         }
-
-        if ("moveTo".equals(action) || atomTarget.startsWith("moveTo_")) {
-            String search = atomTarget;
-            if (search.contains("_")) {
-                search = search.substring(search.indexOf('_') + 1);
-            }
-            for (int dx = -scanRange; dx <= scanRange; dx++) {
-                for (int dy = -scanRange; dy <= scanRange; dy++) {
-                    for (int dz = -scanRange; dz <= scanRange; dz++) {
-                        BlockPos pos = botPos.add(dx, dy, dz);
-                        BlockState state = world.getBlockState(pos);
-                        if (state.isAir() || state.isOf(Blocks.BEDROCK)) continue;
-                        String blockId = Registries.BLOCK.getId(state.getBlock()).toString();
-                        for (var rule : CategoryMapper.getCategoryRules().entrySet()) {
-                            if (rule.getKey().equals(search)) {
-                                for (String pattern : rule.getValue()) {
-                                    if (blockId.toLowerCase().contains(pattern.toLowerCase())) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        if (blockId.toLowerCase().contains(search.toLowerCase())) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
-        }
-
-        return "equipItem".equals(action) || atomTarget.startsWith("equip_");
+        return false;
     }
 
     private List<String> extractTargets(ObservedSequence sequence) {
@@ -596,18 +581,7 @@ public class ConditionedReflex {
             bayesianModule.update(skillId, features, result.success());
         }
 
-        if (botInstance != null && botInstance.getBotContext() != null) {
-            MemoryManager mem = botInstance.getBotContext().memoryManager();
-            if (mem != null) {
-                MemoryGraph mg = mem.getMemoryGraph();
-                if (mg != null) {
-                    List<String> nodeIds = mg.findNodeIdsByReflex(skillId);
-                    if (!nodeIds.isEmpty()) {
-                        mg.reinforcePath(nodeIds, result.success() ? 0.05 : -0.03);
-                    }
-                }
-            }
-        }
+        reinforceMemoryGraph(skillId, result.success());
 
         if (result.success()) {
             LOGGER.info("[ConditionedReflex] 成功: {}", skillId);
@@ -1060,6 +1034,19 @@ public class ConditionedReflex {
         if (count > 0) {
             LOGGER.debug("[ConditionedReflex] 社交观察学习: category={} 提升 {} 个反射", category, count);
         }
+    }
+
+    private void reinforceMemoryGraph(String skillId, boolean success) {
+        if (botInstance == null) return;
+        var ctx = botInstance.getBotContext();
+        if (ctx == null) return;
+        MemoryManager mem = ctx.memoryManager();
+        if (mem == null) return;
+        MemoryGraph mg = mem.getMemoryGraph();
+        if (mg == null) return;
+        List<String> nodeIds = mg.findNodeIdsByReflex(skillId);
+        if (nodeIds.isEmpty()) return;
+        mg.reinforcePath(nodeIds, success ? 0.05 : -0.03);
     }
 
     public void reinforceWithSpill(String skillId, double delta) {

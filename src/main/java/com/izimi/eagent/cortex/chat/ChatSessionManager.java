@@ -17,13 +17,10 @@ public class ChatSessionManager {
     private static final int MAX_WINDOW_SIZE = 6;
     private final Deque<Message> window = new ArrayDeque<>(MAX_WINDOW_SIZE);
     private final BayesianModule bayesianModule;
-    @SuppressWarnings("unused")
-    private final UUID botId;
     private String currentGoal = "";
 
     public ChatSessionManager(BayesianModule bayesianModule, UUID botId) {
         this.bayesianModule = bayesianModule;
-        this.botId = botId;
     }
 
     public void addMessage(Message msg) {

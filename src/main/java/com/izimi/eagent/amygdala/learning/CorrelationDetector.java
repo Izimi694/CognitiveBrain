@@ -41,6 +41,7 @@ public class CorrelationDetector {
     private final SkillManager skillManager;
     private final BasicActionAdapter adapter;
     private final Deque<TrialRecord> recentTrials = new ArrayDeque<>();
+    private BayesianModule bayesian;
     private int cooldown = 0;
 
     record TrialRecord(String action, String target, String contextFingerprint, boolean success) {}
@@ -50,8 +51,8 @@ public class CorrelationDetector {
         this.adapter = worldCtx.brainstem().basicActions();
     }
 
-    @SuppressWarnings("unused")
     public void setBayesianModule(BayesianModule bayesianModule) {
+        this.bayesian = bayesianModule;
     }
 
     public boolean tryExplore(ServerPlayerEntity bot) {

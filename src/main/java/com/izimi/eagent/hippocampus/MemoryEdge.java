@@ -1,5 +1,7 @@
 package com.izimi.eagent.hippocampus;
 
+import java.util.Objects;
+
 public class MemoryEdge {
     private final String fromId;
     private final String toId;
@@ -13,9 +15,9 @@ public class MemoryEdge {
     }
 
     MemoryEdge(String fromId, String toId, RelationType type, double weight, long createdAt, long lastReinforcedAt) {
-        this.fromId = fromId;
-        this.toId = toId;
-        this.type = type;
+        this.fromId = Objects.requireNonNull(fromId, "fromId must not be null");
+        this.toId = Objects.requireNonNull(toId, "toId must not be null");
+        this.type = Objects.requireNonNull(type, "type must not be null");
         this.weight = Math.max(0.1, Math.min(1.0, weight));
         this.createdAt = createdAt;
         this.lastReinforcedAt = lastReinforcedAt;

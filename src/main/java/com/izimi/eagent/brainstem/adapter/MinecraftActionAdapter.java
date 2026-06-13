@@ -340,25 +340,26 @@ public class MinecraftActionAdapter implements BasicActionAdapter {
     @Override
     public ActionResult avoidLava(ServerPlayerEntity bot, double speed) {
         if (bot == null) return ActionResult.unable("avoidLava: bot为null");
-        BlockPos botPos = bot.getBlockPos();
         ServerWorld world = bot.getServerWorld();
-        Vec3d away = null;
-        for (int dx = -3; dx <= 3; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dz = -3; dz <= 3; dz++) {
-                    if (world.getBlockState(botPos.add(dx, dy, dz)).isOf(Blocks.LAVA)) {
-                        away = Vec3d.ofCenter(botPos).subtract(Vec3d.ofCenter(botPos.add(dx, dy, dz))).normalize();
-                        break;
-                    }
-                }
-                if (away != null) break;
-            }
-            if (away != null) break;
-        }
+        Vec3d away = findLavaAwayVector(bot, world);
         if (away == null) return ActionResult.unable("avoidLava: 附近没有熔岩");
         bot.setVelocity(away.multiply(speed));
         bot.velocityModified = true;
         return ActionResult.success("avoid_lava");
+    }
+
+    private static Vec3d findLavaAwayVector(ServerPlayerEntity bot, ServerWorld world) {
+        BlockPos botPos = bot.getBlockPos();
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -3; dz <= 3; dz++) {
+                    if (world.getBlockState(botPos.add(dx, dy, dz)).isOf(Blocks.LAVA)) {
+                        return Vec3d.ofCenter(botPos).subtract(Vec3d.ofCenter(botPos.add(dx, dy, dz))).normalize();
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     @Override
@@ -366,25 +367,29 @@ public class MinecraftActionAdapter implements BasicActionAdapter {
         if (bot == null) return ActionResult.unable("seekShelter: bot为null");
         ServerWorld world = bot.getServerWorld();
         BlockPos botPos = bot.getBlockPos();
+        if (trySeekShelterAt(bot, world, botPos, speed)) return ActionResult.success("seek_shelter");
+        Vec3d forward = bot.getRotationVector().multiply(speed);
+        bot.setVelocity(new Vec3d(forward.x, 0.05, forward.z));
+        bot.velocityModified = true;
+        return ActionResult.partial(0.1, "seekShelter: 寻找中");
+    }
+
+    private static boolean trySeekShelterAt(ServerPlayerEntity bot, ServerWorld world, BlockPos botPos, double speed) {
         for (int r = 1; r <= 5; r++) {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     BlockPos check = botPos.add(dx, 0, dz);
                     BlockPos above = check.up();
-                    if (!world.getBlockState(above).isAir() && world.getBlockState(above).isOpaque()
-                            && !world.getBlockState(check).isAir()) {
-                        Vec3d dir = Vec3d.ofCenter(check).subtract(Vec3d.ofCenter(botPos)).normalize();
-                        bot.setVelocity(dir.multiply(speed));
-                        bot.velocityModified = true;
-                        return ActionResult.success("seek_shelter");
-                    }
+                    if (world.getBlockState(above).isAir() || !world.getBlockState(above).isOpaque()) continue;
+                    if (world.getBlockState(check).isAir()) continue;
+                    Vec3d dir = Vec3d.ofCenter(check).subtract(Vec3d.ofCenter(botPos)).normalize();
+                    bot.setVelocity(dir.multiply(speed));
+                    bot.velocityModified = true;
+                    return true;
                 }
             }
         }
-        Vec3d forward = bot.getRotationVector().multiply(speed);
-        bot.setVelocity(new Vec3d(forward.x, 0.05, forward.z));
-        bot.velocityModified = true;
-        return ActionResult.partial(0.1, "seekShelter: 寻找中");
+        return false;
     }
 
     @Override
@@ -458,28 +463,7 @@ public class MinecraftActionAdapter implements BasicActionAdapter {
             int invStart = needsTable ? CT_INV_START : INV_INV_START;
             int hotbarStart = needsTable ? CT_HOTBAR_START : INV_HOTBAR_START;
 
-            if (recipe instanceof ShapedRecipe shaped) {
-                int rw = shaped.getWidth();
-                int rh = shaped.getHeight();
-                for (int row = 0; row < rh; row++) {
-                    for (int col = 0; col < rw; col++) {
-                        int idx = row * rw + col;
-                        if (idx >= ingredients.size()) break;
-                        Ingredient ing = ingredients.get(idx);
-                        if (ing.isEmpty()) continue;
-                        int gridSlot = row * gridWidth + col + gridStart;
-                        moveIngredientToSlot(bot, ing, gridSlot, invStart, hotbarStart);
-                    }
-                }
-            } else {
-                int slot = gridStart;
-                for (Ingredient ing : ingredients) {
-                    if (ing.isEmpty()) continue;
-                    if (slot > (needsTable ? CT_GRID_END : INV_GRID_END)) break;
-                    moveIngredientToSlot(bot, ing, slot, invStart, hotbarStart);
-                    slot++;
-                }
-            }
+            placeIngredients(recipe, ingredients, bot, gridWidth, gridStart, invStart, hotbarStart, needsTable);
 
             // Step 5: Check result slot and take output
             ItemStack resultStack = handler.getSlot(needsTable ? CT_RESULT : INV_RESULT).getStack();
@@ -663,5 +647,41 @@ public class MinecraftActionAdapter implements BasicActionAdapter {
         }
         Vec3d look = bot.getRotationVector();
         return new Vec3d(-look.x, 0, -look.z).normalize();
+    }
+
+    private void placeIngredients(CraftingRecipe recipe, List<Ingredient> ingredients, ServerPlayerEntity bot,
+                                   int gridWidth, int gridStart, int invStart, int hotbarStart, boolean needsTable) {
+        if (recipe instanceof ShapedRecipe shaped) {
+            placeShapedIngredients(shaped, ingredients, bot, gridWidth, gridStart, invStart, hotbarStart);
+        } else {
+            placeShapelessIngredients(ingredients, bot, gridStart, invStart, hotbarStart, needsTable);
+        }
+    }
+
+    private void placeShapedIngredients(ShapedRecipe shaped, List<Ingredient> ingredients, ServerPlayerEntity bot,
+                                         int gridWidth, int gridStart, int invStart, int hotbarStart) {
+        int rw = shaped.getWidth();
+        int rh = shaped.getHeight();
+        for (int row = 0; row < rh; row++) {
+            for (int col = 0; col < rw; col++) {
+                int idx = row * rw + col;
+                if (idx >= ingredients.size()) return;
+                Ingredient ing = ingredients.get(idx);
+                if (ing.isEmpty()) continue;
+                int gridSlot = row * gridWidth + col + gridStart;
+                moveIngredientToSlot(bot, ing, gridSlot, invStart, hotbarStart);
+            }
+        }
+    }
+
+    private void placeShapelessIngredients(List<Ingredient> ingredients, ServerPlayerEntity bot,
+                                            int gridStart, int invStart, int hotbarStart, boolean needsTable) {
+        int slot = gridStart;
+        for (Ingredient ing : ingredients) {
+            if (ing.isEmpty()) continue;
+            if (slot > (needsTable ? CT_GRID_END : INV_GRID_END)) return;
+            moveIngredientToSlot(bot, ing, slot, invStart, hotbarStart);
+            slot++;
+        }
     }
 }
